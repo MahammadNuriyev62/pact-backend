@@ -113,11 +113,12 @@ router.get('/:id/submissions', authMiddleware, (req: AuthRequest, res: Response)
     ORDER BY s.timestamp DESC
   `).all(req.params.id) as any[];
 
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
   res.json(subs.map(s => ({
     id: s.id,
     pactId: s.pact_id,
     userId: s.user_id,
-    photoUri: s.photo_uri,
+    photoUri: s.photo_uri.startsWith('/') ? `${baseUrl}${s.photo_uri}` : s.photo_uri,
     timestamp: s.timestamp,
     verified: !!s.verified,
     user: { id: s.user_id, name: s.user_name, username: s.username, avatar: s.user_avatar },
