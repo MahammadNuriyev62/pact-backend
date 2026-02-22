@@ -41,7 +41,7 @@ router.post('/:pactId', authMiddleware, (req: AuthRequest, res: Response) => {
     const today = new Date().toISOString().split('T')[0];
 
     const participants = db.prepare(
-      'SELECT user_id FROM pact_participants WHERE pact_id = ? AND user_id != ?'
+      `SELECT user_id FROM pact_participants WHERE pact_id = ? AND user_id != ? AND status = 'accepted'`
     ).all(pactId, req.userId!) as any[];
 
     const todaySubmitters = db.prepare(

@@ -64,6 +64,13 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_submissions_user ON submissions(user_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
   `);
+
+  // Migration: add status column to pact_participants if not present
+  try {
+    db.exec(`ALTER TABLE pact_participants ADD COLUMN status TEXT NOT NULL DEFAULT 'accepted'`);
+  } catch (e: any) {
+    if (!e.message.includes('duplicate column name')) throw e;
+  }
 }
 
 export default db;

@@ -40,4 +40,51 @@ router.put('/read', authMiddleware, (req: AuthRequest, res: Response) => {
   res.json({ success: true });
 });
 
+// Accept a pact invitation
+router.post('/:id/accept', authMiddleware, (req: AuthRequest, res: Response) => {
+  const notif = db.prepare(
+    'SELECT * FROM notifications WHERE id = ? AND user_id = ?'
+  ).get(req.params.id, req.userId!) as any;
+
+  if (!notif || notif.type !== 'pact_invitation') {
+    res.status(404).json({ error: 'Invitation not found' });
+    return;
+  }
+
+  // Check pact still exists
+  const pact = db.prepare('SELECT 1 FROM pacts WHERE id = ?').get(notif.pact_id);
+  if (!pact) {
+    res.status(404).json({ error: 'Pact no longer exists' });
+    return;
+  }
+
+  db.prepare(
+    'UPDATE pact_participants SET status = ? WHERE pact_id = ? AND user_id = ?'
+  ).run('accepted', notif.pact_id, req.userId!);
+
+  db.prepare('UPDATE notifications SET read = 1 WHERE id = ?').run(req.params.id);
+
+  res.json({ success: true });
+});
+
+// Decline a pact invitation
+router.post('/:id/decline', authMiddleware, (req: AuthRequest, res: Response) => {
+  const notif = db.prepare(
+    'SELECT * FROM notifications WHERE id = ? AND user_id = ?'
+  ).get(req.params.id, req.userId!) as any;
+
+  if (!notif || notif.type !== 'pact_invitation') {
+    res.status(404).json({ error: 'Invitation not found' });
+    return;
+  }
+
+  db.prepare(
+    'UPDATE pact_participants SET status = ? WHERE pact_id = ? AND user_id = ?'
+  ).run('declined', notif.pact_id, req.userId!);
+
+  db.prepare('UPDATE notifications SET read = 1 WHERE id = ?').run(req.params.id);
+
+  res.json({ success: true });
+});
+
 export default router;

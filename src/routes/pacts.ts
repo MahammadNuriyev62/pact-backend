@@ -13,7 +13,14 @@ function getPactWithDetails(pactId: string, currentUserId: string) {
     SELECT u.id, u.name, u.username, u.avatar
     FROM pact_participants pp
     JOIN users u ON u.id = pp.user_id
-    WHERE pp.pact_id = ?
+    WHERE pp.pact_id = ? AND pp.status = 'accepted'
+  `).all(pactId) as any[];
+
+  const pending = db.prepare(`
+    SELECT u.id, u.name, u.username, u.avatar
+    FROM pact_participants pp
+    JOIN users u ON u.id = pp.user_id
+    WHERE pp.pact_id = ? AND pp.status = 'pending'
   `).all(pactId) as any[];
 
   // Mark current user
@@ -32,15 +39,17 @@ function getPactWithDetails(pactId: string, currentUserId: string) {
     timesPerWeek: pact.times_per_week,
     participants: participantsWithFlag.map(p => p.id),
     participantDetails: participantsWithFlag,
+    pendingParticipants: pending,
+    createdBy: pact.created_by,
     createdAt: pact.created_at,
     deadline: pact.deadline,
   };
 }
 
-// List current user's pacts
+// List current user's pacts (only accepted)
 router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
   const pactIds = db.prepare(`
-    SELECT pact_id FROM pact_participants WHERE user_id = ?
+    SELECT pact_id FROM pact_participants WHERE user_id = ? AND status = 'accepted'
   `).all(req.userId!) as any[];
 
   const pacts = pactIds
@@ -88,19 +97,64 @@ router.post('/', authMiddleware, (req: AuthRequest, res: Response) => {
     now,
   );
 
-  // Add creator as participant
-  db.prepare('INSERT INTO pact_participants (pact_id, user_id) VALUES (?, ?)').run(id, req.userId!);
+  // Add creator as participant (auto-accepted)
+  db.prepare('INSERT INTO pact_participants (pact_id, user_id, status) VALUES (?, ?, ?)').run(id, req.userId!, 'accepted');
 
-  // Add other participants
-  const addParticipant = db.prepare('INSERT OR IGNORE INTO pact_participants (pact_id, user_id) VALUES (?, ?)');
+  // Add other participants as pending with invitation notifications
+  const addParticipant = db.prepare('INSERT OR IGNORE INTO pact_participants (pact_id, user_id, status) VALUES (?, ?, ?)');
+  const insertNotif = db.prepare(`
+    INSERT INTO notifications (id, type, from_user_id, pact_id, user_id, message, timestamp, read)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+  `);
+  const fromUser = db.prepare('SELECT name FROM users WHERE id = ?').get(req.userId!) as any;
+  const timestamp = new Date().toISOString();
+
   if (participants && Array.isArray(participants)) {
     for (const userId of participants) {
-      addParticipant.run(id, userId);
+      addParticipant.run(id, userId, 'pending');
+      insertNotif.run(
+        uuid(),
+        'pact_invitation',
+        req.userId!,
+        id,
+        userId,
+        `${fromUser.name} invited you to join "${title}"`,
+        timestamp,
+      );
     }
   }
 
   const pact = getPactWithDetails(id, req.userId!);
   res.status(201).json(pact);
+});
+
+// Leave a pact ("Give Up")
+router.post('/:id/leave', authMiddleware, (req: AuthRequest, res: Response) => {
+  const pactId = req.params.id;
+
+  const membership = db.prepare(
+    `SELECT 1 FROM pact_participants WHERE pact_id = ? AND user_id = ? AND status = 'accepted'`
+  ).get(pactId, req.userId!) as any;
+
+  if (!membership) {
+    res.status(404).json({ error: 'You are not an active participant of this pact' });
+    return;
+  }
+
+  db.prepare(
+    'UPDATE pact_participants SET status = ? WHERE pact_id = ? AND user_id = ?'
+  ).run('left', pactId, req.userId!);
+
+  // If no accepted participants remain, delete the pact
+  const remaining = db.prepare(
+    `SELECT COUNT(*) as count FROM pact_participants WHERE pact_id = ? AND status = 'accepted'`
+  ).get(pactId) as any;
+
+  if (remaining.count === 0) {
+    db.prepare('DELETE FROM pacts WHERE id = ?').run(pactId);
+  }
+
+  res.json({ success: true });
 });
 
 // Get submissions for a pact

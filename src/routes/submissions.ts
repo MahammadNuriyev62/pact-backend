@@ -25,8 +25,8 @@ router.post('/', authMiddleware, upload.single('photo'), (req: AuthRequest, res:
     return;
   }
 
-  // Verify user is a participant
-  const participant = db.prepare('SELECT 1 FROM pact_participants WHERE pact_id = ? AND user_id = ?').get(pactId, req.userId!);
+  // Verify user is an accepted participant
+  const participant = db.prepare(`SELECT 1 FROM pact_participants WHERE pact_id = ? AND user_id = ? AND status = 'accepted'`).get(pactId, req.userId!);
   if (!participant) {
     res.status(403).json({ error: 'You are not a participant of this pact' });
     return;
@@ -52,9 +52,9 @@ router.post('/', authMiddleware, upload.single('photo'), (req: AuthRequest, res:
     VALUES (?, ?, ?, ?, ?, 1)
   `).run(id, pactId, req.userId!, photoUri, timestamp);
 
-  // Create notification for other participants
+  // Create notification for other accepted participants
   const otherParticipants = db.prepare(
-    'SELECT user_id FROM pact_participants WHERE pact_id = ? AND user_id != ?'
+    `SELECT user_id FROM pact_participants WHERE pact_id = ? AND user_id != ? AND status = 'accepted'`
   ).all(pactId, req.userId!) as any[];
 
   const user = db.prepare('SELECT name FROM users WHERE id = ?').get(req.userId!) as any;
@@ -96,7 +96,7 @@ router.get('/recent', authMiddleware, (req: AuthRequest, res: Response) => {
     FROM submissions s
     JOIN users u ON u.id = s.user_id
     JOIN pacts p ON p.id = s.pact_id
-    JOIN pact_participants pp ON pp.pact_id = s.pact_id AND pp.user_id = ?
+    JOIN pact_participants pp ON pp.pact_id = s.pact_id AND pp.user_id = ? AND pp.status = 'accepted'
     ORDER BY s.timestamp DESC
     LIMIT 10
   `).all(req.userId!) as any[];

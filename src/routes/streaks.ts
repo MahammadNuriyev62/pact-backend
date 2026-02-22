@@ -85,7 +85,7 @@ function computeStreak(completedDates: string[], frequency: string, timesPerWeek
 // Get streaks for current user across all pacts
 router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
   const pactIds = db.prepare(
-    'SELECT pact_id FROM pact_participants WHERE user_id = ?'
+    `SELECT pact_id FROM pact_participants WHERE user_id = ? AND status = 'accepted'`
   ).all(req.userId!) as any[];
 
   const streaks = pactIds.map(row => {
@@ -118,7 +118,7 @@ router.get('/activity', authMiddleware, (req: AuthRequest, res: Response) => {
   const subs = db.prepare(`
     SELECT substr(timestamp, 1, 10) as date, COUNT(*) as count
     FROM submissions s
-    JOIN pact_participants pp ON pp.pact_id = s.pact_id AND pp.user_id = ?
+    JOIN pact_participants pp ON pp.pact_id = s.pact_id AND pp.user_id = ? AND pp.status = 'accepted'
     WHERE s.user_id = ? AND s.verified = 1
     GROUP BY date
   `).all(req.userId!, req.userId!) as any[];
