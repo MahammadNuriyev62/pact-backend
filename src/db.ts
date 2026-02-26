@@ -71,6 +71,14 @@ export function initDb() {
   } catch (e: any) {
     if (!e.message.includes('duplicate column name')) throw e;
   }
+
+  // Migration: add google_id column to users for Google OAuth
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN google_id TEXT`);
+  } catch (e: any) {
+    if (!e.message.includes('duplicate column name')) throw e;
+  }
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL`);
 }
 
 export default db;
