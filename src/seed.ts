@@ -87,6 +87,15 @@ export function seed() {
     }
   }
 
+  // Friendships — all demo users are friends with each other
+  const insertFriendship = db.prepare('INSERT INTO friendships (id, requester_id, addressee_id, status, created_at) VALUES (?, ?, ?, ?, ?)');
+  let fId = 1;
+  for (let i = 0; i < users.length; i++) {
+    for (let j = i + 1; j < users.length; j++) {
+      insertFriendship.run(`f${fId++}`, users[i].id, users[j].id, 'accepted', '2026-01-01T00:00:00Z');
+    }
+  }
+
   // Notifications
   const today = new Date().toISOString().split('T')[0];
   const insertNotif = db.prepare('INSERT INTO notifications (id, type, from_user_id, pact_id, user_id, message, timestamp, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');

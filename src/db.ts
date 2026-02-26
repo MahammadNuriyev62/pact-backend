@@ -79,6 +79,44 @@ export function initDb() {
     if (!e.message.includes('duplicate column name')) throw e;
   }
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL`);
+
+  // Friendships table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS friendships (
+      id TEXT PRIMARY KEY,
+      requester_id TEXT NOT NULL REFERENCES users(id),
+      addressee_id TEXT NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      UNIQUE(requester_id, addressee_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_friendships_requester ON friendships(requester_id);
+    CREATE INDEX IF NOT EXISTS idx_friendships_addressee ON friendships(addressee_id);
+  `);
+
+  // Migration: make pact_id nullable in notifications (needed for friend request notifications)
+  const colInfo = db.prepare("PRAGMA table_info(notifications)").all() as any[];
+  const pactIdCol = colInfo.find((c: any) => c.name === 'pact_id');
+  if (pactIdCol && pactIdCol.notnull === 1) {
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      CREATE TABLE notifications_new (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        from_user_id TEXT REFERENCES users(id),
+        pact_id TEXT REFERENCES pacts(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        message TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        read INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO notifications_new SELECT * FROM notifications;
+      DROP TABLE notifications;
+      ALTER TABLE notifications_new RENAME TO notifications;
+      CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+    `);
+    db.pragma('foreign_keys = ON');
+  }
 }
 
 export default db;
