@@ -5,8 +5,11 @@ import path from 'path';
 import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
 
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..');
+const uploadsDir = path.join(DATA_DIR, 'uploads');
+
 const storage = multer.diskStorage({
-  destination: path.join(__dirname, '..', '..', 'uploads'),
+  destination: uploadsDir,
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname) || '.jpg';
     cb(null, `${uuid()}${ext}`);

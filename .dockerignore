@@ -1,0 +1,8 @@
+node_modules
+dist
+pact.db
+pact.db-shm
+pact.db-wal
+uploads
+.env
+*.md

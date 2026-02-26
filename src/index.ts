@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { initDb } from './db';
 import { seed } from './seed';
 import authRoutes from './routes/auth';
@@ -19,8 +20,13 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Ensure uploads directory exists
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
+const uploadsDir = path.join(DATA_DIR, 'uploads');
+fs.mkdirSync(uploadsDir, { recursive: true });
+
 // Serve uploaded photos
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+app.use('/uploads', express.static(uploadsDir));
 
 // Routes
 app.use('/auth', authRoutes);
