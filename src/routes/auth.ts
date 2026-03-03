@@ -47,6 +47,8 @@ router.post('/login', (req: AuthRequest, res: Response) => {
   }
 
   const token = signToken(user.id);
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const avatar = user.avatar?.startsWith('/') ? `${baseUrl}${user.avatar}` : user.avatar;
   res.json({
     token,
     user: {
@@ -54,7 +56,7 @@ router.post('/login', (req: AuthRequest, res: Response) => {
       name: user.name,
       username: user.username,
       email: user.email,
-      avatar: user.avatar,
+      avatar,
       isCurrentUser: true,
     },
   });
@@ -159,6 +161,10 @@ router.get('/me', authMiddleware, (req: AuthRequest, res: Response) => {
   if (!user) {
     res.status(404).json({ error: 'User not found' });
     return;
+  }
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  if (user.avatar && user.avatar.startsWith('/')) {
+    user.avatar = `${baseUrl}${user.avatar}`;
   }
   res.json({ ...user, isCurrentUser: true });
 });

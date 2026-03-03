@@ -1,7 +1,22 @@
 import { Router, Response } from 'express';
 import { v4 as uuid } from 'uuid';
+import multer from 'multer';
+import path from 'path';
 import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
+
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..');
+const uploadsDir = path.join(DATA_DIR, 'uploads');
+
+const avatarStorage = multer.diskStorage({
+  destination: uploadsDir,
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.jpg';
+    cb(null, `avatar-${uuid()}${ext}`);
+  },
+});
+
+const avatarUpload = multer({ storage: avatarStorage, limits: { fileSize: 5 * 1024 * 1024 } });
 
 const router = Router();
 
@@ -42,6 +57,20 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
   `).all(req.userId!, req.userId!, req.userId!) as any[];
 
   res.json(friends);
+});
+
+// PUT /users/me/avatar — upload a new profile avatar
+router.put('/me/avatar', authMiddleware, avatarUpload.single('avatar'), (req: AuthRequest, res: Response) => {
+  if (!req.file) {
+    res.status(400).json({ error: 'avatar file is required' });
+    return;
+  }
+
+  const avatarPath = `/uploads/${req.file.filename}`;
+  db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(avatarPath, req.userId!);
+
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  res.json({ avatar: `${baseUrl}${avatarPath}` });
 });
 
 // GET /users/search?q=... — search users by name or username (rate limited)
