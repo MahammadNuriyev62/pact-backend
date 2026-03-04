@@ -1,7 +1,9 @@
 import { Router, Response } from 'express';
+import { v4 as uuid } from 'uuid';
 import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { fullAvatarUrl } from '../utils';
+import { sendPushToUser } from '../push';
 
 const router = Router();
 
@@ -85,6 +87,23 @@ router.post('/:id/decline', authMiddleware, (req: AuthRequest, res: Response) =>
   ).run('declined', notif.pact_id, req.userId!);
 
   db.prepare('UPDATE notifications SET read = 1 WHERE id = ?').run(req.params.id);
+
+  // Notify the pact creator that the invitation was declined
+  const pact = db.prepare('SELECT title, created_by FROM pacts WHERE id = ?').get(notif.pact_id) as any;
+  const decliner = db.prepare('SELECT name FROM users WHERE id = ?').get(req.userId!) as any;
+  if (pact && decliner) {
+    const message = `${decliner.name} declined your invitation to "${pact.title}"`;
+    db.prepare(
+      'INSERT INTO notifications (id, type, from_user_id, pact_id, user_id, message, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(uuid(), 'pact_declined', req.userId!, notif.pact_id, pact.created_by, message, new Date().toISOString());
+    sendPushToUser(pact.created_by, {
+      title: 'Invitation Declined',
+      body: message,
+      icon: '/icon-192x192.png',
+      url: '/notifications',
+      tag: `pact-declined-${notif.pact_id}-${req.userId}`,
+    });
+  }
 
   res.json({ success: true });
 });

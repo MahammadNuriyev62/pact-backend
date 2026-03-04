@@ -165,6 +165,57 @@ router.post('/:id/leave', authMiddleware, (req: AuthRequest, res: Response) => {
   res.json({ success: true });
 });
 
+// Invite users to an existing pact
+router.post('/:id/invite', authMiddleware, (req: AuthRequest, res: Response) => {
+  const pactId = req.params.id;
+  const { userIds } = req.body;
+
+  if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+    res.status(400).json({ error: 'userIds array is required' });
+    return;
+  }
+
+  // Verify the pact exists and the requester is an accepted participant
+  const membership = db.prepare(
+    `SELECT 1 FROM pact_participants WHERE pact_id = ? AND user_id = ? AND status = 'accepted'`
+  ).get(pactId, req.userId!) as any;
+
+  if (!membership) {
+    res.status(403).json({ error: 'You are not an active participant of this pact' });
+    return;
+  }
+
+  const pact = db.prepare('SELECT title FROM pacts WHERE id = ?').get(pactId) as any;
+  const fromUser = db.prepare('SELECT name FROM users WHERE id = ?').get(req.userId!) as any;
+  const timestamp = new Date().toISOString();
+
+  const addParticipant = db.prepare('INSERT OR IGNORE INTO pact_participants (pact_id, user_id, status) VALUES (?, ?, ?)');
+  const insertNotif = db.prepare(
+    'INSERT INTO notifications (id, type, from_user_id, pact_id, user_id, message, timestamp, read) VALUES (?, ?, ?, ?, ?, ?, ?, 0)'
+  );
+
+  const invited: string[] = [];
+  for (const userId of userIds) {
+    // Skip if already a participant (any status)
+    const existing = db.prepare('SELECT status FROM pact_participants WHERE pact_id = ? AND user_id = ?').get(pactId, userId) as any;
+    if (existing) continue;
+
+    addParticipant.run(pactId, userId, 'pending');
+    const message = `${fromUser.name} invited you to join "${pact.title}"`;
+    insertNotif.run(uuid(), 'pact_invitation', req.userId!, pactId, userId, message, timestamp);
+    sendPushToUser(userId, {
+      title: 'Pact Invitation',
+      body: message,
+      icon: '/icon-192x192.png',
+      url: '/notifications',
+      tag: `pact-invitation-${pactId}`,
+    });
+    invited.push(userId);
+  }
+
+  res.json({ success: true, invited });
+});
+
 // Get submissions for a pact
 router.get('/:id/submissions', authMiddleware, (req: AuthRequest, res: Response) => {
   const subs = db.prepare(`
