@@ -29,20 +29,29 @@ export async function sendPushToUser(userId: string, payload: PushPayload): Prom
     'SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?'
   ).all(userId) as Array<{ id: string; endpoint: string; p256dh: string; auth: string }>;
 
-  if (subscriptions.length === 0) return;
+  if (subscriptions.length === 0) {
+    console.log(`[Push] No subscriptions for user ${userId}, skipping`);
+    return;
+  }
 
+  console.log(`[Push] Sending "${payload.title}" to ${subscriptions.length} subscription(s) for user ${userId}`);
   const jsonPayload = JSON.stringify(payload);
 
-  await Promise.allSettled(
+  const results = await Promise.allSettled(
     subscriptions.map((sub) =>
       webpush
         .sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           jsonPayload
         )
+        .then(() => {
+          console.log(`[Push] Delivered to ${sub.endpoint.slice(0, 60)}...`);
+        })
         .catch((err) => {
+          console.error(`[Push] Failed for ${sub.endpoint.slice(0, 60)}...: ${err.statusCode || err.message}`);
           if (err.statusCode === 410 || err.statusCode === 404) {
             db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(sub.id);
+            console.log(`[Push] Removed expired subscription ${sub.id}`);
           }
         })
     )
