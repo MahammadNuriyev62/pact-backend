@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
+import { fullAvatarUrl } from '../utils';
 
 const router = Router();
 
@@ -18,6 +19,7 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
     id: n.id,
     type: n.type,
     fromUserId: n.from_user_id,
+    fromUserAvatar: fullAvatarUrl(n.from_user_avatar, req),
     pactId: n.pact_id,
     message: n.message,
     timestamp: n.timestamp,

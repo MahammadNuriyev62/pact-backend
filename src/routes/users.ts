@@ -5,6 +5,7 @@ import path from 'path';
 import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { sendPushToUser } from '../push';
+import { fullAvatarUrl } from '../utils';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..');
 const uploadsDir = path.join(DATA_DIR, 'uploads');
@@ -57,7 +58,7 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
     WHERE f.status = 'accepted' AND u.id != ?
   `).all(req.userId!, req.userId!, req.userId!) as any[];
 
-  res.json(friends);
+  res.json(friends.map(f => ({ ...f, avatar: fullAvatarUrl(f.avatar, req) })));
 });
 
 // PUT /users/me/avatar — upload a new profile avatar
@@ -117,7 +118,7 @@ router.get('/search', authMiddleware, (req: AuthRequest, res: Response) => {
     id: u.id,
     name: u.name,
     username: u.username,
-    avatar: u.avatar,
+    avatar: fullAvatarUrl(u.avatar, req),
     friendshipStatus: u.friendship_status,
     friendshipDirection: u.friendship_direction,
     friendshipId: u.friendship_id,
@@ -294,7 +295,7 @@ router.get('/friend-requests', authMiddleware, (req: AuthRequest, res: Response)
     id: r.id,
     name: r.name,
     username: r.username,
-    avatar: r.avatar,
+    avatar: fullAvatarUrl(r.avatar, req),
     createdAt: r.created_at,
   })));
 });

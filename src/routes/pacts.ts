@@ -3,10 +3,11 @@ import { v4 as uuid } from 'uuid';
 import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { sendPushToUser } from '../push';
+import { fullAvatarUrl } from '../utils';
 
 const router = Router();
 
-function getPactWithDetails(pactId: string, currentUserId: string) {
+function getPactWithDetails(pactId: string, currentUserId: string, req: import('express').Request) {
   const pact = db.prepare('SELECT * FROM pacts WHERE id = ?').get(pactId) as any;
   if (!pact) return null;
 
@@ -27,7 +28,13 @@ function getPactWithDetails(pactId: string, currentUserId: string) {
   // Mark current user
   const participantsWithFlag = participants.map(p => ({
     ...p,
+    avatar: fullAvatarUrl(p.avatar, req),
     isCurrentUser: p.id === currentUserId,
+  }));
+
+  const pendingWithAvatars = pending.map(p => ({
+    ...p,
+    avatar: fullAvatarUrl(p.avatar, req),
   }));
 
   return {
@@ -40,7 +47,7 @@ function getPactWithDetails(pactId: string, currentUserId: string) {
     timesPerWeek: pact.times_per_week,
     participants: participantsWithFlag.map(p => p.id),
     participantDetails: participantsWithFlag,
-    pendingParticipants: pending,
+    pendingParticipants: pendingWithAvatars,
     createdBy: pact.created_by,
     createdAt: pact.created_at,
     deadline: pact.deadline,
@@ -54,7 +61,7 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
   `).all(req.userId!) as any[];
 
   const pacts = pactIds
-    .map(row => getPactWithDetails(row.pact_id, req.userId!))
+    .map(row => getPactWithDetails(row.pact_id, req.userId!, req))
     .filter(Boolean);
 
   res.json(pacts);
@@ -62,7 +69,7 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
 
 // Get single pact detail
 router.get('/:id', authMiddleware, (req: AuthRequest, res: Response) => {
-  const pact = getPactWithDetails(req.params.id, req.userId!);
+  const pact = getPactWithDetails(req.params.id, req.userId!, req);
   if (!pact) {
     res.status(404).json({ error: 'Pact not found' });
     return;
@@ -125,7 +132,7 @@ router.post('/', authMiddleware, (req: AuthRequest, res: Response) => {
     }
   }
 
-  const pact = getPactWithDetails(id, req.userId!);
+  const pact = getPactWithDetails(id, req.userId!, req);
   res.status(201).json(pact);
 });
 
@@ -176,7 +183,7 @@ router.get('/:id/submissions', authMiddleware, (req: AuthRequest, res: Response)
     photoUri: s.photo_uri.startsWith('/') ? `${baseUrl}${s.photo_uri}` : s.photo_uri,
     timestamp: s.timestamp,
     verified: !!s.verified,
-    user: { id: s.user_id, name: s.user_name, username: s.username, avatar: s.user_avatar },
+    user: { id: s.user_id, name: s.user_name, username: s.username, avatar: fullAvatarUrl(s.user_avatar, req) },
   })));
 });
 

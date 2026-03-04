@@ -5,6 +5,7 @@ import path from 'path';
 import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { sendPushToUser } from '../push';
+import { fullAvatarUrl } from '../utils';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..');
 const uploadsDir = path.join(DATA_DIR, 'uploads');
@@ -113,7 +114,7 @@ router.get('/recent', authMiddleware, (req: AuthRequest, res: Response) => {
     photoUri: s.photo_uri.startsWith('/') ? `${baseUrl}${s.photo_uri}` : s.photo_uri,
     timestamp: s.timestamp,
     verified: !!s.verified,
-    user: { id: s.user_id, name: s.user_name, username: s.username, avatar: s.user_avatar },
+    user: { id: s.user_id, name: s.user_name, username: s.username, avatar: fullAvatarUrl(s.user_avatar, req) },
     pact: { id: s.pact_id, title: s.pact_title, icon: s.pact_icon, iconFamily: s.pact_icon_family, color: s.pact_color },
   })));
 });
