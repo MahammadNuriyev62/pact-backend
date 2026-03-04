@@ -9,6 +9,7 @@ const JPEG_QUALITY = 80;
 export async function processAvatar(filePath: string): Promise<void> {
   try {
     const buffer = await sharp(filePath)
+      .rotate()
       .resize(AVATAR_MAX_SIZE, AVATAR_MAX_SIZE, { fit: 'cover' })
       .jpeg({ quality: JPEG_QUALITY })
       .toBuffer();
@@ -21,6 +22,7 @@ export async function processAvatar(filePath: string): Promise<void> {
 export async function processSubmissionPhoto(filePath: string): Promise<void> {
   try {
     const buffer = await sharp(filePath)
+      .rotate()
       .resize(PHOTO_MAX_WIDTH, undefined, { fit: 'inside', withoutEnlargement: true })
       .jpeg({ quality: JPEG_QUALITY })
       .toBuffer();
