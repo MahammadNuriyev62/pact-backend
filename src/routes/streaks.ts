@@ -82,33 +82,41 @@ function computeStreak(completedDates: string[], frequency: string, timesPerWeek
   return { currentStreak, longestStreak };
 }
 
-// Get streaks for current user across all pacts
+// Get streaks for all participants across the current user's pacts
 router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
   const pactIds = db.prepare(
     `SELECT pact_id FROM pact_participants WHERE user_id = ? AND status = 'accepted'`
   ).all(req.userId!) as any[];
 
-  const streaks = pactIds.map(row => {
+  const streaks: any[] = [];
+
+  for (const row of pactIds) {
     const pact = db.prepare('SELECT * FROM pacts WHERE id = ?').get(row.pact_id) as any;
-    if (!pact) return null;
+    if (!pact) continue;
 
-    // Get all completed dates for this user+pact
-    const subs = db.prepare(
-      'SELECT DISTINCT substr(timestamp, 1, 10) as date FROM submissions WHERE pact_id = ? AND user_id = ? AND verified = 1'
-    ).all(row.pact_id, req.userId!) as any[];
+    // Get all accepted participants in this pact
+    const participants = db.prepare(
+      `SELECT user_id FROM pact_participants WHERE pact_id = ? AND status = 'accepted'`
+    ).all(row.pact_id) as any[];
 
-    const completedDates = subs.map((s: any) => s.date);
-    const { currentStreak, longestStreak } = computeStreak(completedDates, pact.frequency, pact.times_per_week);
+    for (const participant of participants) {
+      const subs = db.prepare(
+        'SELECT DISTINCT substr(timestamp, 1, 10) as date FROM submissions WHERE pact_id = ? AND user_id = ? AND verified = 1'
+      ).all(row.pact_id, participant.user_id) as any[];
 
-    return {
-      pactId: row.pact_id,
-      userId: req.userId!,
-      currentStreak,
-      longestStreak,
-      completedDates,
-      streakType: pact.frequency,
-    };
-  }).filter(Boolean);
+      const completedDates = subs.map((s: any) => s.date);
+      const { currentStreak, longestStreak } = computeStreak(completedDates, pact.frequency, pact.times_per_week);
+
+      streaks.push({
+        pactId: row.pact_id,
+        userId: participant.user_id,
+        currentStreak,
+        longestStreak,
+        completedDates,
+        streakType: pact.frequency,
+      });
+    }
+  }
 
   res.json(streaks);
 });
