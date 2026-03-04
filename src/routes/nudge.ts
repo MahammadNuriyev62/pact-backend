@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { v4 as uuid } from 'uuid';
 import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
+import { sendPushToUser } from '../push';
 
 const router = Router();
 
@@ -24,17 +25,18 @@ router.post('/:pactId', authMiddleware, (req: AuthRequest, res: Response) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, 0)
   `);
 
+  const nudgeMessage = `${fromUser.name} nudged you: Don't break the streak! Complete ${pact.title}!`;
+
   if (targetUserId) {
     // Nudge specific user
-    insertNotif.run(
-      uuid(),
-      'nudge',
-      req.userId!,
-      pactId,
-      targetUserId,
-      `${fromUser.name} nudged you: Don't break the streak! Complete ${pact.title}!`,
-      timestamp,
-    );
+    insertNotif.run(uuid(), 'nudge', req.userId!, pactId, targetUserId, nudgeMessage, timestamp);
+    sendPushToUser(targetUserId, {
+      title: 'Nudge!',
+      body: nudgeMessage,
+      icon: '/icon-192x192.png',
+      url: '/notifications',
+      tag: `nudge-${pactId}`,
+    });
     res.json({ success: true, nudged: [targetUserId] });
   } else {
     // Nudge all pending participants (those who haven't submitted today)
@@ -52,15 +54,14 @@ router.post('/:pactId', authMiddleware, (req: AuthRequest, res: Response) => {
     const pending = participants.filter(p => !submittedSet.has(p.user_id));
 
     for (const p of pending) {
-      insertNotif.run(
-        uuid(),
-        'nudge',
-        req.userId!,
-        pactId,
-        p.user_id,
-        `${fromUser.name} nudged you: Don't break the streak! Complete ${pact.title}!`,
-        timestamp,
-      );
+      insertNotif.run(uuid(), 'nudge', req.userId!, pactId, p.user_id, nudgeMessage, timestamp);
+      sendPushToUser(p.user_id, {
+        title: 'Nudge!',
+        body: nudgeMessage,
+        icon: '/icon-192x192.png',
+        url: '/notifications',
+        tag: `nudge-${pactId}`,
+      });
     }
 
     res.json({ success: true, nudged: pending.map((p: any) => p.user_id) });

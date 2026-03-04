@@ -12,6 +12,7 @@ import submissionsRoutes from './routes/submissions';
 import streaksRoutes from './routes/streaks';
 import notificationsRoutes from './routes/notifications';
 import nudgeRoutes from './routes/nudge';
+import pushRoutes from './routes/push';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -37,6 +38,7 @@ app.use('/submissions', submissionsRoutes);
 app.use('/streaks', streaksRoutes);
 app.use('/notifications', notificationsRoutes);
 app.use('/nudge', nudgeRoutes);
+app.use('/push', pushRoutes);
 
 // Health check
 app.get('/health', (_req, res) => {

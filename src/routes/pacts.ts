@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { v4 as uuid } from 'uuid';
 import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
+import { sendPushToUser } from '../push';
 
 const router = Router();
 
@@ -112,15 +113,15 @@ router.post('/', authMiddleware, (req: AuthRequest, res: Response) => {
   if (participants && Array.isArray(participants)) {
     for (const userId of participants) {
       addParticipant.run(id, userId, 'pending');
-      insertNotif.run(
-        uuid(),
-        'pact_invitation',
-        req.userId!,
-        id,
-        userId,
-        `${fromUser.name} invited you to join "${title}"`,
-        timestamp,
-      );
+      const message = `${fromUser.name} invited you to join "${title}"`;
+      insertNotif.run(uuid(), 'pact_invitation', req.userId!, id, userId, message, timestamp);
+      sendPushToUser(userId, {
+        title: 'Pact Invitation',
+        body: message,
+        icon: '/icon-192x192.png',
+        url: '/notifications',
+        tag: `pact-invitation-${id}`,
+      });
     }
   }
 

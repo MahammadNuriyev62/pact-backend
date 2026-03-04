@@ -4,6 +4,7 @@ import multer from 'multer';
 import path from 'path';
 import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
+import { sendPushToUser } from '../push';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..');
 const uploadsDir = path.join(DATA_DIR, 'uploads');
@@ -69,15 +70,15 @@ router.post('/', authMiddleware, upload.single('photo'), (req: AuthRequest, res:
   `);
 
   for (const p of otherParticipants) {
-    insertNotif.run(
-      uuid(),
-      'new_submission',
-      req.userId!,
-      pactId,
-      p.user_id,
-      `${user.name} just submitted for ${pact.title}!`,
-      timestamp,
-    );
+    const message = `${user.name} just submitted for ${pact.title}!`;
+    insertNotif.run(uuid(), 'new_submission', req.userId!, pactId, p.user_id, message, timestamp);
+    sendPushToUser(p.user_id, {
+      title: 'New Submission',
+      body: message,
+      icon: '/icon-192x192.png',
+      url: '/notifications',
+      tag: `submission-${pactId}`,
+    });
   }
 
   res.status(201).json({

@@ -4,6 +4,7 @@ import multer from 'multer';
 import path from 'path';
 import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
+import { sendPushToUser } from '../push';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..');
 const uploadsDir = path.join(DATA_DIR, 'uploads');
@@ -164,9 +165,17 @@ router.post('/friend-request', authMiddleware, (req: AuthRequest, res: Response)
 
     // Create notification
     const fromUser = db.prepare('SELECT name FROM users WHERE id = ?').get(req.userId!) as any;
+    const friendReqMsg = `${fromUser.name} sent you a friend request`;
     db.prepare(
       'INSERT INTO notifications (id, type, from_user_id, pact_id, user_id, message, timestamp) VALUES (?, ?, ?, NULL, ?, ?, ?)'
-    ).run(uuid(), 'friend_request', req.userId!, targetUserId, `${fromUser.name} sent you a friend request`, new Date().toISOString());
+    ).run(uuid(), 'friend_request', req.userId!, targetUserId, friendReqMsg, new Date().toISOString());
+    sendPushToUser(targetUserId, {
+      title: 'Friend Request',
+      body: friendReqMsg,
+      icon: '/icon-192x192.png',
+      url: '/notifications',
+      tag: `friend-request-${req.userId}`,
+    });
 
     res.json({ success: true, friendshipId: existing.id });
     return;
@@ -179,9 +188,17 @@ router.post('/friend-request', authMiddleware, (req: AuthRequest, res: Response)
 
   // Create notification for the target user
   const fromUser = db.prepare('SELECT name FROM users WHERE id = ?').get(req.userId!) as any;
+  const friendReqMsg = `${fromUser.name} sent you a friend request`;
   db.prepare(
     'INSERT INTO notifications (id, type, from_user_id, pact_id, user_id, message, timestamp) VALUES (?, ?, ?, NULL, ?, ?, ?)'
-  ).run(uuid(), 'friend_request', req.userId!, targetUserId, `${fromUser.name} sent you a friend request`, now);
+  ).run(uuid(), 'friend_request', req.userId!, targetUserId, friendReqMsg, now);
+  sendPushToUser(targetUserId, {
+    title: 'Friend Request',
+    body: friendReqMsg,
+    icon: '/icon-192x192.png',
+    url: '/notifications',
+    tag: `friend-request-${req.userId}`,
+  });
 
   res.status(201).json({ success: true, friendshipId: id });
 });
@@ -207,9 +224,17 @@ router.post('/friend-accept', authMiddleware, (req: AuthRequest, res: Response) 
 
   // Notify the requester
   const fromUser = db.prepare('SELECT name FROM users WHERE id = ?').get(req.userId!) as any;
+  const acceptMsg = `${fromUser.name} accepted your friend request`;
   db.prepare(
     'INSERT INTO notifications (id, type, from_user_id, pact_id, user_id, message, timestamp) VALUES (?, ?, ?, NULL, ?, ?, ?)'
-  ).run(uuid(), 'friend_accepted', req.userId!, friendship.requester_id, `${fromUser.name} accepted your friend request`, new Date().toISOString());
+  ).run(uuid(), 'friend_accepted', req.userId!, friendship.requester_id, acceptMsg, new Date().toISOString());
+  sendPushToUser(friendship.requester_id, {
+    title: 'Friend Accepted',
+    body: acceptMsg,
+    icon: '/icon-192x192.png',
+    url: '/notifications',
+    tag: `friend-accepted-${req.userId}`,
+  });
 
   res.json({ success: true });
 });
