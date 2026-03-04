@@ -6,6 +6,7 @@ import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { sendPushToUser } from '../push';
 import { fullAvatarUrl } from '../utils';
+import { processSubmissionPhoto } from '../imageUtils';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..');
 const uploadsDir = path.join(DATA_DIR, 'uploads');
@@ -23,7 +24,7 @@ const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 const router = Router();
 
 // Create a submission (always verified)
-router.post('/', authMiddleware, upload.single('photo'), (req: AuthRequest, res: Response) => {
+router.post('/', authMiddleware, upload.single('photo'), async (req: AuthRequest, res: Response) => {
   const { pactId } = req.body;
   if (!pactId) {
     res.status(400).json({ error: 'pactId is required' });
@@ -42,6 +43,7 @@ router.post('/', authMiddleware, upload.single('photo'), (req: AuthRequest, res:
   let photoUri: string;
 
   if (req.file) {
+    await processSubmissionPhoto(req.file.path);
     photoUri = `/uploads/${req.file.filename}`;
   } else if (req.body.photoUri) {
     // Allow passing a URL directly (for web/external images)

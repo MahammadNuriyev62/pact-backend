@@ -6,6 +6,7 @@ import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { sendPushToUser } from '../push';
 import { fullAvatarUrl } from '../utils';
+import { processAvatar } from '../imageUtils';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..');
 const uploadsDir = path.join(DATA_DIR, 'uploads');
@@ -62,11 +63,13 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
 });
 
 // PUT /users/me/avatar — upload a new profile avatar
-router.put('/me/avatar', authMiddleware, avatarUpload.single('avatar'), (req: AuthRequest, res: Response) => {
+router.put('/me/avatar', authMiddleware, avatarUpload.single('avatar'), async (req: AuthRequest, res: Response) => {
   if (!req.file) {
     res.status(400).json({ error: 'avatar file is required' });
     return;
   }
+
+  await processAvatar(req.file.path);
 
   const avatarPath = `/uploads/${req.file.filename}`;
   db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(avatarPath, req.userId!);
