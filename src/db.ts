@@ -95,6 +95,31 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_friendships_addressee ON friendships(addressee_id);
   `);
 
+  // Reactions table (emoji reactions on submissions)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reactions (
+      id TEXT PRIMARY KEY,
+      submission_id TEXT NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      emoji TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(submission_id, user_id, emoji)
+    );
+    CREATE INDEX IF NOT EXISTS idx_reactions_submission ON reactions(submission_id);
+  `);
+
+  // Messages table (group chat per pact)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id TEXT PRIMARY KEY,
+      pact_id TEXT NOT NULL REFERENCES pacts(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_messages_pact_created ON messages(pact_id, created_at);
+  `);
+
   // Push subscriptions table (for web push notifications)
   db.exec(`
     CREATE TABLE IF NOT EXISTS push_subscriptions (

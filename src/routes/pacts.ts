@@ -227,15 +227,29 @@ router.get('/:id/submissions', authMiddleware, (req: AuthRequest, res: Response)
   `).all(req.params.id) as any[];
 
   const baseUrl = `${req.protocol}://${req.get('host')}`;
-  res.json(subs.map(s => ({
-    id: s.id,
-    pactId: s.pact_id,
-    userId: s.user_id,
-    photoUri: s.photo_uri.startsWith('/') ? `${baseUrl}${s.photo_uri}` : s.photo_uri,
-    timestamp: s.timestamp,
-    verified: !!s.verified,
-    user: { id: s.user_id, name: s.user_name, username: s.username, avatar: fullAvatarUrl(s.user_avatar, req) },
-  })));
+  const getReactions = db.prepare(
+    `SELECT emoji, COUNT(*) as count, GROUP_CONCAT(user_id) as user_ids FROM reactions WHERE submission_id = ? GROUP BY emoji`
+  );
+
+  res.json(subs.map(s => {
+    const reactionRows = getReactions.all(s.id) as any[];
+    const reactions = reactionRows.map(r => ({
+      emoji: r.emoji,
+      count: r.count,
+      reacted: (r.user_ids as string).split(',').includes(req.userId!),
+    }));
+
+    return {
+      id: s.id,
+      pactId: s.pact_id,
+      userId: s.user_id,
+      photoUri: s.photo_uri.startsWith('/') ? `${baseUrl}${s.photo_uri}` : s.photo_uri,
+      timestamp: s.timestamp,
+      verified: !!s.verified,
+      user: { id: s.user_id, name: s.user_name, username: s.username, avatar: fullAvatarUrl(s.user_avatar, req) },
+      reactions,
+    };
+  }));
 });
 
 export default router;

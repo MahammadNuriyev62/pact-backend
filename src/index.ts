@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import { createServer } from 'http';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
@@ -13,9 +14,13 @@ import streaksRoutes from './routes/streaks';
 import notificationsRoutes from './routes/notifications';
 import nudgeRoutes from './routes/nudge';
 import pushRoutes from './routes/push';
+import reactionsRoutes from './routes/reactions';
+import messagesRoutes from './routes/messages';
 import { migrateExistingImages } from './imageUtils';
+import { initSocket } from './socket';
 
 const app = express();
+const httpServer = createServer(app);
 const PORT = process.env.PORT || 3000;
 
 // Middleware
@@ -40,6 +45,8 @@ app.use('/streaks', streaksRoutes);
 app.use('/notifications', notificationsRoutes);
 app.use('/nudge', nudgeRoutes);
 app.use('/push', pushRoutes);
+app.use('/reactions', reactionsRoutes);
+app.use('/pacts', messagesRoutes);
 
 // Health check
 app.get('/health', (_req, res) => {
@@ -53,6 +60,9 @@ seed();
 // Compress existing unoptimized images (idempotent, skips small files)
 migrateExistingImages(uploadsDir);
 
-app.listen(PORT, () => {
+// Initialize WebSocket server
+initSocket(httpServer);
+
+httpServer.listen(PORT, () => {
   console.log(`Pact backend running on http://localhost:${PORT}`);
 });
