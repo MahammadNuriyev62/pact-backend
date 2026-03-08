@@ -41,18 +41,18 @@ export function seed() {
   }
 
   const pacts = [
-    { id: 'p1', title: 'Morning Run', icon: 'fitness', icon_family: 'Ionicons', color: '#FF6B6B', frequency: 'daily', times_per_week: null, deadline: '23:59', created_by: 'u1', created_at: '2026-01-15', participants: ['u1', 'u2', 'u3'] },
-    { id: 'p2', title: 'Read 30 Min', icon: 'book', icon_family: 'Ionicons', color: '#FFE66D', frequency: 'daily', times_per_week: null, deadline: '23:59', created_by: 'u1', created_at: '2026-01-20', participants: ['u1', 'u4', 'u5'] },
-    { id: 'p3', title: 'Healthy Meals', icon: 'restaurant', icon_family: 'Ionicons', color: '#95E1D3', frequency: 'weekly', times_per_week: 5, deadline: '23:59', created_by: 'u1', created_at: '2026-01-10', participants: ['u1', 'u2', 'u6'] },
-    { id: 'p4', title: 'Meditate', icon: 'leaf', icon_family: 'Ionicons', color: '#4ECDC4', frequency: 'daily', times_per_week: null, deadline: '22:00', created_by: 'u1', created_at: '2026-02-01', participants: ['u1', 'u3', 'u4', 'u6'] },
-    { id: 'p5', title: 'No Phone Before 9am', icon: 'phone-portrait-outline', icon_family: 'Ionicons', color: '#F38181', frequency: 'daily', times_per_week: null, deadline: '09:00', created_by: 'u1', created_at: '2026-02-05', participants: ['u1', 'u5'] },
+    { id: 'p1', title: 'Morning Run', icon: 'fitness', icon_family: 'Ionicons', color: '#FF6B6B', frequency: 'daily', times_per_week: null, deadline: '23:59', timezone: 'America/New_York', created_by: 'u1', created_at: '2026-01-15', participants: ['u1', 'u2', 'u3'] },
+    { id: 'p2', title: 'Read 30 Min', icon: 'book', icon_family: 'Ionicons', color: '#FFE66D', frequency: 'daily', times_per_week: null, deadline: '23:59', timezone: 'America/New_York', created_by: 'u1', created_at: '2026-01-20', participants: ['u1', 'u4', 'u5'] },
+    { id: 'p3', title: 'Healthy Meals', icon: 'restaurant', icon_family: 'Ionicons', color: '#95E1D3', frequency: 'weekly', times_per_week: 5, deadline: '23:59', timezone: 'America/New_York', created_by: 'u1', created_at: '2026-01-10', participants: ['u1', 'u2', 'u6'] },
+    { id: 'p4', title: 'Meditate', icon: 'leaf', icon_family: 'Ionicons', color: '#4ECDC4', frequency: 'daily', times_per_week: null, deadline: '22:00', timezone: 'America/New_York', created_by: 'u1', created_at: '2026-02-01', participants: ['u1', 'u3', 'u4', 'u6'] },
+    { id: 'p5', title: 'No Phone Before 9am', icon: 'phone-portrait-outline', icon_family: 'Ionicons', color: '#F38181', frequency: 'daily', times_per_week: null, deadline: '09:00', timezone: 'America/New_York', created_by: 'u1', created_at: '2026-02-05', participants: ['u1', 'u5'] },
   ];
 
-  const insertPact = db.prepare('INSERT INTO pacts (id, title, icon, icon_family, color, frequency, times_per_week, deadline, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const insertPact = db.prepare('INSERT INTO pacts (id, title, icon, icon_family, color, frequency, times_per_week, deadline, timezone, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const insertParticipant = db.prepare('INSERT INTO pact_participants (pact_id, user_id) VALUES (?, ?)');
 
   for (const p of pacts) {
-    insertPact.run(p.id, p.title, p.icon, p.icon_family, p.color, p.frequency, p.times_per_week, p.deadline, p.created_by, p.created_at);
+    insertPact.run(p.id, p.title, p.icon, p.icon_family, p.color, p.frequency, p.times_per_week, p.deadline, p.timezone, p.created_by, p.created_at);
     for (const userId of p.participants) {
       insertParticipant.run(p.id, userId);
     }

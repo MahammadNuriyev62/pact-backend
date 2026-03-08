@@ -18,6 +18,7 @@ import reactionsRoutes from './routes/reactions';
 import messagesRoutes from './routes/messages';
 import { migrateExistingImages } from './imageUtils';
 import { initSocket } from './socket';
+import { startScheduler } from './scheduler';
 
 const app = express();
 const httpServer = createServer(app);
@@ -62,6 +63,9 @@ migrateExistingImages(uploadsDir);
 
 // Initialize WebSocket server
 initSocket(httpServer);
+
+// Start deadline reminder scheduler
+startScheduler();
 
 httpServer.listen(PORT, () => {
   console.log(`Pact backend running on http://localhost:${PORT}`);

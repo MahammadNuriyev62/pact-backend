@@ -66,6 +66,13 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
   `);
 
+  // Migration: add timezone column to pacts (defaults to UTC for existing pacts)
+  try {
+    db.exec(`ALTER TABLE pacts ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC'`);
+  } catch (e: any) {
+    if (!e.message.includes('duplicate column name')) throw e;
+  }
+
   // Migration: add status column to pact_participants if not present
   try {
     db.exec(`ALTER TABLE pact_participants ADD COLUMN status TEXT NOT NULL DEFAULT 'accepted'`);

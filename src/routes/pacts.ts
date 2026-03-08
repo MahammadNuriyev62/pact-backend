@@ -51,6 +51,7 @@ function getPactWithDetails(pactId: string, currentUserId: string, req: import('
     createdBy: pact.created_by,
     createdAt: pact.created_at,
     deadline: pact.deadline,
+    timezone: pact.timezone || 'UTC',
   };
 }
 
@@ -79,7 +80,7 @@ router.get('/:id', authMiddleware, (req: AuthRequest, res: Response) => {
 
 // Create a new pact
 router.post('/', authMiddleware, (req: AuthRequest, res: Response) => {
-  const { title, icon, iconFamily, color, frequency, timesPerWeek, deadline, participants } = req.body;
+  const { title, icon, iconFamily, color, frequency, timesPerWeek, deadline, timezone, participants } = req.body;
 
   if (!title || !icon) {
     res.status(400).json({ error: 'title and icon are required' });
@@ -90,8 +91,8 @@ router.post('/', authMiddleware, (req: AuthRequest, res: Response) => {
   const now = new Date().toISOString().split('T')[0];
 
   db.prepare(`
-    INSERT INTO pacts (id, title, icon, icon_family, color, frequency, times_per_week, deadline, created_by, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO pacts (id, title, icon, icon_family, color, frequency, times_per_week, deadline, timezone, created_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     title,
@@ -101,6 +102,7 @@ router.post('/', authMiddleware, (req: AuthRequest, res: Response) => {
     frequency || 'daily',
     timesPerWeek || null,
     deadline || '23:59',
+    timezone || 'UTC',
     req.userId!,
     now,
   );
