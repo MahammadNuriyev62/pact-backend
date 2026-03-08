@@ -5,6 +5,13 @@ import { getTodayInTimezone, utcTimestampToDateInTimezone } from '../timezone';
 
 const router = Router();
 
+/** Max freezes a user can bank per pact */
+const MAX_FREEZES = 2;
+/** Days of consecutive personal submissions needed to earn 1 freeze */
+const DAYS_PER_FREEZE = 7;
+/** Minimum days between freeze uses */
+const FREEZE_COOLDOWN_DAYS = 7;
+
 function computeStreak(completedDates: string[], frequency: string, today: string, timesPerWeek?: number): { currentStreak: number; longestStreak: number } {
   if (completedDates.length === 0) return { currentStreak: 0, longestStreak: 0 };
 
@@ -79,6 +86,77 @@ function computeStreak(completedDates: string[], frequency: string, today: strin
   return { currentStreak, longestStreak };
 }
 
+/**
+ * Compute the personal consecutive submission streak (excluding freeze days)
+ * going backwards from today. Returns the count of real submission days.
+ */
+function computePersonalSubmissionStreak(submissionDates: Set<string>, freezeDates: Set<string>, today: string): number {
+  let streak = 0;
+  const d = new Date(today + 'T00:00:00Z');
+
+  // Start from today, go backwards
+  for (let i = 0; i < 365; i++) {
+    const dateStr = d.toISOString().split('T')[0];
+    if (submissionDates.has(dateStr)) {
+      streak++;
+    } else if (freezeDates.has(dateStr)) {
+      // Freeze day — skip it (don't break streak, don't count toward earning)
+    } else {
+      break; // Gap — streak ends
+    }
+    d.setUTCDate(d.getUTCDate() - 1);
+  }
+
+  return streak;
+}
+
+/**
+ * Compute freeze info for a user+pact.
+ * Returns available count, used dates, cooldown status.
+ */
+function computeFreezeInfo(pactId: string, userId: string, submissionDates: Set<string>, today: string) {
+  // Get all freeze dates for this user+pact
+  const freezeRows = db.prepare(
+    'SELECT used_for_date FROM streak_freezes WHERE pact_id = ? AND user_id = ? ORDER BY used_for_date'
+  ).all(pactId, userId) as any[];
+  const freezeDates = new Set(freezeRows.map((r: any) => r.used_for_date));
+  const freezeDatesArr = freezeRows.map((r: any) => r.used_for_date);
+
+  // Personal submission streak (real submissions only, skipping freeze days)
+  const personalStreak = computePersonalSubmissionStreak(submissionDates, freezeDates, today);
+
+  // Earned freezes based on personal submission streak
+  const totalEarned = Math.floor(personalStreak / DAYS_PER_FREEZE);
+
+  // Used freezes count
+  const usedCount = freezeDates.size;
+
+  // Available (earned minus used, capped at MAX)
+  const available = Math.max(0, Math.min(MAX_FREEZES, totalEarned) - usedCount);
+
+  // Last freeze date for cooldown check
+  const lastFreezeDate = freezeDatesArr.length > 0 ? freezeDatesArr[freezeDatesArr.length - 1] : null;
+
+  let onCooldown = false;
+  if (lastFreezeDate) {
+    const lastD = new Date(lastFreezeDate + 'T00:00:00Z');
+    const todayD = new Date(today + 'T00:00:00Z');
+    const daysSince = Math.round((todayD.getTime() - lastD.getTime()) / (1000 * 60 * 60 * 24));
+    onCooldown = daysSince < FREEZE_COOLDOWN_DAYS;
+  }
+
+  return {
+    available,
+    totalEarned: Math.min(MAX_FREEZES, totalEarned),
+    used: usedCount,
+    freezeDates: [...freezeDates],
+    lastFreezeDate,
+    onCooldown,
+    personalStreak,
+    nextFreezeIn: personalStreak >= DAYS_PER_FREEZE * MAX_FREEZES ? 0 : DAYS_PER_FREEZE - (personalStreak % DAYS_PER_FREEZE),
+  };
+}
+
 // Get unified streaks per pact (streak only increments when ALL participants complete)
 router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
   const pactIds = db.prepare(
@@ -111,31 +189,55 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
       perUserDates.set(p.user_id, dates);
     }
 
-    // Unified completed dates: days where ALL participants submitted
+    // Get freeze dates per participant
+    const perUserFreezeDates: Map<string, Set<string>> = new Map();
+    for (const p of participants) {
+      const freezeRows = db.prepare(
+        'SELECT used_for_date FROM streak_freezes WHERE pact_id = ? AND user_id = ?'
+      ).all(row.pact_id, p.user_id) as any[];
+      perUserFreezeDates.set(p.user_id, new Set(freezeRows.map((r: any) => r.used_for_date)));
+    }
+
+    // Effective dates per user = submissions ∪ freezes
+    const perUserEffective: Map<string, Set<string>> = new Map();
+    for (const p of participants) {
+      const effective = new Set(perUserDates.get(p.user_id) || new Set());
+      const freezes = perUserFreezeDates.get(p.user_id) || new Set();
+      for (const d of freezes) effective.add(d);
+      perUserEffective.set(p.user_id, effective);
+    }
+
+    // Unified completed dates: days where ALL participants submitted OR used a freeze
     const allDates = new Set<string>();
-    for (const dates of perUserDates.values()) {
+    for (const dates of perUserEffective.values()) {
       for (const d of dates) allDates.add(d);
     }
 
     const unifiedDates: string[] = [];
     for (const date of allDates) {
-      let allSubmitted = true;
-      for (const dates of perUserDates.values()) {
-        if (!dates.has(date)) { allSubmitted = false; break; }
+      let allCovered = true;
+      for (const dates of perUserEffective.values()) {
+        if (!dates.has(date)) { allCovered = false; break; }
       }
-      if (allSubmitted) unifiedDates.push(date);
+      if (allCovered) unifiedDates.push(date);
     }
 
     const { currentStreak, longestStreak } = computeStreak(unifiedDates, pact.frequency, today, pact.times_per_week);
 
-    // Today's status: how many participants submitted today
+    // Today's status: how many participants submitted today (actual submissions, not freezes)
     let completedToday = 0;
     for (const dates of perUserDates.values()) {
       if (dates.has(today)) completedToday++;
     }
 
-    // Current user's own completed dates (for personal calendar view)
-    const myDates = perUserDates.get(req.userId!) || new Set();
+    // Current user's own completed dates (for personal calendar view) — includes freeze days
+    const myDates = perUserEffective.get(req.userId!) || new Set();
+
+    // Current user's freeze info
+    const mySubmissionDates = perUserDates.get(req.userId!) || new Set();
+    const freezeInfo = pact.frequency === 'daily'
+      ? computeFreezeInfo(row.pact_id, req.userId!, mySubmissionDates, today)
+      : null;
 
     streaks.push({
       pactId: row.pact_id,
@@ -148,6 +250,7 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
         completed: completedToday,
         total: participantCount,
       },
+      freezeInfo,
     });
   }
 
@@ -175,3 +278,4 @@ router.get('/activity', authMiddleware, (req: AuthRequest, res: Response) => {
 });
 
 export default router;
+export { computePersonalSubmissionStreak, computeFreezeInfo, MAX_FREEZES, DAYS_PER_FREEZE, FREEZE_COOLDOWN_DAYS };

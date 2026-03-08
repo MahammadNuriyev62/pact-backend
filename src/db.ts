@@ -140,6 +140,19 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
   `);
 
+  // Streak freezes table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS streak_freezes (
+      id TEXT PRIMARY KEY,
+      pact_id TEXT NOT NULL REFERENCES pacts(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      used_for_date TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(pact_id, user_id, used_for_date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_streak_freezes_pact_user ON streak_freezes(pact_id, user_id);
+  `);
+
   // Migration: make pact_id nullable in notifications (needed for friend request notifications)
   const colInfo = db.prepare("PRAGMA table_info(notifications)").all() as any[];
   const pactIdCol = colInfo.find((c: any) => c.name === 'pact_id');
