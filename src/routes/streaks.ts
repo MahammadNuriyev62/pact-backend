@@ -239,6 +239,57 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
       ? computeFreezeInfo(row.pact_id, req.userId!, mySubmissionDates, today)
       : null;
 
+    // Weekly progress for weekly pacts
+    let weeklyProgress = null;
+    if (pact.frequency === 'weekly') {
+      // Compute the Sunday that starts the current week in pact timezone
+      const todayDate = new Date(today + 'T00:00:00Z');
+      const dayOfWeek = todayDate.getUTCDay(); // 0=Sunday
+      const weekStartDate = new Date(todayDate);
+      weekStartDate.setUTCDate(todayDate.getUTCDate() - dayOfWeek);
+      const weekStart = weekStartDate.toISOString().split('T')[0];
+
+      // Saturday end of week
+      const weekEndDate = new Date(weekStartDate);
+      weekEndDate.setUTCDate(weekStartDate.getUTCDate() + 6);
+      const weekEnd = weekEndDate.toISOString().split('T')[0];
+
+      // Count current user's submissions this week (unique dates)
+      let completed = 0;
+      for (const dateStr of mySubmissionDates) {
+        if (dateStr >= weekStart && dateStr <= weekEnd) {
+          completed++;
+        }
+      }
+
+      const target = pact.times_per_week || 3;
+
+      // Check if this is the pact's first week
+      // pact.created_at is stored as a date string like "2026-01-15"
+      const pactCreatedDate = pact.created_at.split('T')[0]; // handle both "2026-01-15" and ISO timestamp
+      const isFirstWeek = pactCreatedDate >= weekStart && pactCreatedDate <= weekEnd;
+
+      // Days left in the week (including today): Saturday - today + 1
+      const daysLeft = 7 - dayOfWeek; // Sunday=7, Monday=6, ..., Saturday=1
+
+      // Adjusted target for first week
+      let adjustedTarget = target;
+      if (isFirstWeek) {
+        const createdD = new Date(pactCreatedDate + 'T00:00:00Z');
+        const createdDayOfWeek = createdD.getUTCDay();
+        const daysLeftInWeekFromCreation = 7 - createdDayOfWeek; // days from creation day to Saturday inclusive
+        adjustedTarget = Math.max(1, Math.ceil(target * daysLeftInWeekFromCreation / 7));
+      }
+
+      weeklyProgress = {
+        completed,
+        target,
+        adjustedTarget,
+        isFirstWeek,
+        daysLeft,
+      };
+    }
+
     streaks.push({
       pactId: row.pact_id,
       currentStreak,
@@ -251,6 +302,7 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
         total: participantCount,
       },
       freezeInfo,
+      ...(weeklyProgress ? { weeklyProgress } : {}),
     });
   }
 
