@@ -232,7 +232,7 @@ router.put('/:id', authMiddleware, (req: AuthRequest, res: Response) => {
       if (allCovered) unifiedDates.push(date);
     }
 
-    const { currentStreak } = computeStreak(unifiedDates, pact.frequency, today, pact.times_per_week);
+    const { currentStreak } = computeStreak(unifiedDates, pact.frequency, today, pact.times_per_week, pact.created_at);
 
     if (currentStreak > 0) {
       res.status(400).json({ error: 'Cannot change frequency or timesPerWeek while the pact has an active streak' });

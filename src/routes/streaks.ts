@@ -12,42 +12,67 @@ const DAYS_PER_FREEZE = 7;
 /** Minimum days between freeze uses */
 const FREEZE_COOLDOWN_DAYS = 7;
 
-function computeStreak(completedDates: string[], frequency: string, today: string, timesPerWeek?: number): { currentStreak: number; longestStreak: number } {
+/** Helper: get the Sunday that starts the week containing a date string */
+function getWeekKey(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  const weekStart = new Date(d);
+  weekStart.setUTCDate(d.getUTCDate() - d.getUTCDay());
+  return weekStart.toISOString().split('T')[0];
+}
+
+function computeStreak(completedDates: string[], frequency: string, today: string, timesPerWeek?: number, createdAt?: string): { currentStreak: number; longestStreak: number } {
   if (completedDates.length === 0) return { currentStreak: 0, longestStreak: 0 };
 
   const sorted = [...completedDates].sort();
 
   if (frequency === 'weekly') {
+    // Group submissions by week (Sunday-start)
     const weeks = new Map<string, number>();
     for (const date of sorted) {
-      const d = new Date(date + 'T00:00:00Z');
-      const weekStart = new Date(d);
-      weekStart.setUTCDate(d.getUTCDate() - d.getUTCDay());
-      const weekKey = weekStart.toISOString().split('T')[0];
+      const weekKey = getWeekKey(date);
       weeks.set(weekKey, (weeks.get(weekKey) || 0) + 1);
     }
 
     const target = timesPerWeek || 3;
-    const weekKeys = [...weeks.keys()].sort();
+
+    // Determine first week key (free pass — excluded from streak)
+    const firstWeekKey = createdAt ? getWeekKey(createdAt.split('T')[0]) : null;
+
+    // Filter out the first week from streak computation
+    const weekKeys = [...weeks.keys()].sort().filter(k => k !== firstWeekKey);
+    if (weekKeys.length === 0) return { currentStreak: 0, longestStreak: 0 };
+
     let currentStreak = 0;
     let longestStreak = 0;
     let streak = 0;
 
     const todayD = new Date(today + 'T00:00:00Z');
+    const currentWeekKey = getWeekKey(today);
+
     for (let i = 0; i < weekKeys.length; i++) {
+      // Check for gap: if previous week exists, ensure they're consecutive (7 days apart)
+      if (i > 0) {
+        const prev = new Date(weekKeys[i - 1] + 'T00:00:00Z');
+        const curr = new Date(weekKeys[i] + 'T00:00:00Z');
+        const gapDays = Math.round((curr.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24));
+        if (gapDays > 7) {
+          streak = 0; // Gap week(s) missed — streak breaks
+        }
+      }
+
       if ((weeks.get(weekKeys[i]) || 0) >= target) {
         streak++;
         longestStreak = Math.max(longestStreak, streak);
       } else {
         streak = 0;
       }
-
-      const weekDate = new Date(weekKeys[i] + 'T00:00:00Z');
-      const diffDays = Math.floor((todayD.getTime() - weekDate.getTime()) / (1000 * 60 * 60 * 24));
-      if (diffDays <= 13) {
-        currentStreak = streak;
-      }
     }
+
+    // Current streak is valid if the last counted week is this week or last week
+    const lastWeekKey = weekKeys[weekKeys.length - 1];
+    const lastWeekD = new Date(lastWeekKey + 'T00:00:00Z');
+    const diffDays = Math.round((todayD.getTime() - lastWeekD.getTime()) / (1000 * 60 * 60 * 24));
+    currentStreak = diffDays <= 13 ? streak : 0;
 
     return { currentStreak, longestStreak };
   }
@@ -222,7 +247,7 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
       if (allCovered) unifiedDates.push(date);
     }
 
-    const { currentStreak, longestStreak } = computeStreak(unifiedDates, pact.frequency, today, pact.times_per_week);
+    const { currentStreak, longestStreak } = computeStreak(unifiedDates, pact.frequency, today, pact.times_per_week, pact.created_at);
 
     // Today's status: how many participants submitted today (actual submissions, not freezes)
     let completedToday = 0;
