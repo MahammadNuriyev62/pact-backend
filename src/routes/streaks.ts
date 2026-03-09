@@ -278,4 +278,4 @@ router.get('/activity', authMiddleware, (req: AuthRequest, res: Response) => {
 });
 
 export default router;
-export { computePersonalSubmissionStreak, computeFreezeInfo, MAX_FREEZES, DAYS_PER_FREEZE, FREEZE_COOLDOWN_DAYS };
+export { computeStreak, computePersonalSubmissionStreak, computeFreezeInfo, MAX_FREEZES, DAYS_PER_FREEZE, FREEZE_COOLDOWN_DAYS };

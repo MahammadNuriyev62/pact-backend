@@ -4,6 +4,8 @@ import db from '../db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { sendPushToUser } from '../push';
 import { fullAvatarUrl } from '../utils';
+import { getTodayInTimezone, utcTimestampToDateInTimezone } from '../timezone';
+import { computeStreak } from './streaks';
 
 const router = Router();
 
@@ -136,6 +138,142 @@ router.post('/', authMiddleware, (req: AuthRequest, res: Response) => {
 
   const pact = getPactWithDetails(id, req.userId!, req);
   res.status(201).json(pact);
+});
+
+// Edit a pact
+router.put('/:id', authMiddleware, (req: AuthRequest, res: Response) => {
+  const pactId = req.params.id;
+
+  // Verify the pact exists
+  const pact = db.prepare('SELECT * FROM pacts WHERE id = ?').get(pactId) as any;
+  if (!pact) {
+    res.status(404).json({ error: 'Pact not found' });
+    return;
+  }
+
+  // Verify the user is an accepted participant
+  const membership = db.prepare(
+    `SELECT 1 FROM pact_participants WHERE pact_id = ? AND user_id = ? AND status = 'accepted'`
+  ).get(pactId, req.userId!) as any;
+
+  if (!membership) {
+    res.status(403).json({ error: 'You are not an active participant of this pact' });
+    return;
+  }
+
+  const { title, icon, iconFamily, color, frequency, timesPerWeek } = req.body;
+
+  // Validate that at least one field is provided
+  if (title === undefined && icon === undefined && iconFamily === undefined &&
+      color === undefined && frequency === undefined && timesPerWeek === undefined) {
+    res.status(400).json({ error: 'At least one field to update is required' });
+    return;
+  }
+
+  // Validate title is not empty if provided
+  if (title !== undefined && (!title || typeof title !== 'string' || !title.trim())) {
+    res.status(400).json({ error: 'title cannot be empty' });
+    return;
+  }
+
+  // Validate icon is not empty if provided
+  if (icon !== undefined && (!icon || typeof icon !== 'string' || !icon.trim())) {
+    res.status(400).json({ error: 'icon cannot be empty' });
+    return;
+  }
+
+  // Validate frequency value if provided
+  if (frequency !== undefined && frequency !== 'daily' && frequency !== 'weekly') {
+    res.status(400).json({ error: 'frequency must be "daily" or "weekly"' });
+    return;
+  }
+
+  // If frequency or timesPerWeek is being changed, check that current streak is 0
+  const frequencyChanging = frequency !== undefined && frequency !== pact.frequency;
+  const timesPerWeekChanging = timesPerWeek !== undefined && timesPerWeek !== pact.times_per_week;
+
+  if (frequencyChanging || timesPerWeekChanging) {
+    // Compute current unified streak (same logic as GET /streaks)
+    const tz = pact.timezone || 'UTC';
+    const today = getTodayInTimezone(tz);
+
+    const participants = db.prepare(
+      `SELECT user_id FROM pact_participants WHERE pact_id = ? AND status = 'accepted'`
+    ).all(pactId) as any[];
+
+    // Build per-user effective dates (submissions + freezes)
+    const perUserEffective: Map<string, Set<string>> = new Map();
+    for (const p of participants) {
+      const subs = db.prepare(
+        'SELECT timestamp FROM submissions WHERE pact_id = ? AND user_id = ? AND verified = 1'
+      ).all(pactId, p.user_id) as any[];
+      const dates = new Set(subs.map((s: any) => utcTimestampToDateInTimezone(s.timestamp, tz)));
+
+      const freezeRows = db.prepare(
+        'SELECT used_for_date FROM streak_freezes WHERE pact_id = ? AND user_id = ?'
+      ).all(pactId, p.user_id) as any[];
+      for (const r of freezeRows) dates.add(r.used_for_date);
+
+      perUserEffective.set(p.user_id, dates);
+    }
+
+    // Unified completed dates: days where ALL participants have effective coverage
+    const allDates = new Set<string>();
+    for (const dates of perUserEffective.values()) {
+      for (const d of dates) allDates.add(d);
+    }
+
+    const unifiedDates: string[] = [];
+    for (const date of allDates) {
+      let allCovered = true;
+      for (const dates of perUserEffective.values()) {
+        if (!dates.has(date)) { allCovered = false; break; }
+      }
+      if (allCovered) unifiedDates.push(date);
+    }
+
+    const { currentStreak } = computeStreak(unifiedDates, pact.frequency, today, pact.times_per_week);
+
+    if (currentStreak > 0) {
+      res.status(400).json({ error: 'Cannot change frequency or timesPerWeek while the pact has an active streak' });
+      return;
+    }
+  }
+
+  // Build the UPDATE query dynamically
+  const updates: string[] = [];
+  const values: any[] = [];
+
+  if (title !== undefined) {
+    updates.push('title = ?');
+    values.push(title.trim());
+  }
+  if (icon !== undefined) {
+    updates.push('icon = ?');
+    values.push(icon.trim());
+  }
+  if (iconFamily !== undefined) {
+    updates.push('icon_family = ?');
+    values.push(iconFamily);
+  }
+  if (color !== undefined) {
+    updates.push('color = ?');
+    values.push(color);
+  }
+  if (frequency !== undefined) {
+    updates.push('frequency = ?');
+    values.push(frequency);
+  }
+  if (timesPerWeek !== undefined) {
+    updates.push('times_per_week = ?');
+    values.push(timesPerWeek);
+  }
+
+  values.push(pactId);
+  db.prepare(`UPDATE pacts SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+
+  const updated = getPactWithDetails(pactId, req.userId!, req);
+  res.json(updated);
 });
 
 // Leave a pact ("Give Up")
