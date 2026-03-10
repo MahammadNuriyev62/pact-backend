@@ -356,40 +356,63 @@ router.post('/:id/invite', authMiddleware, (req: AuthRequest, res: Response) => 
   res.json({ success: true, invited });
 });
 
-// Get submissions for a pact
+// Get submissions for a pact (cursor-based pagination)
 router.get('/:id/submissions', authMiddleware, (req: AuthRequest, res: Response) => {
-  const subs = db.prepare(`
-    SELECT s.*, u.name as user_name, u.username, u.avatar as user_avatar
-    FROM submissions s
-    JOIN users u ON u.id = s.user_id
-    WHERE s.pact_id = ?
-    ORDER BY s.timestamp DESC
-  `).all(req.params.id) as any[];
+  const rawLimit = parseInt(req.query.limit as string);
+  const limit = Math.min(Math.max(isNaN(rawLimit) ? 20 : rawLimit, 1), 50);
+  const before = req.query.before as string | undefined;
+
+  let subs: any[];
+  if (before) {
+    subs = db.prepare(`
+      SELECT s.*, u.name as user_name, u.username, u.avatar as user_avatar
+      FROM submissions s
+      JOIN users u ON u.id = s.user_id
+      WHERE s.pact_id = ? AND s.timestamp < ?
+      ORDER BY s.timestamp DESC
+      LIMIT ?
+    `).all(req.params.id, before, limit + 1) as any[];
+  } else {
+    subs = db.prepare(`
+      SELECT s.*, u.name as user_name, u.username, u.avatar as user_avatar
+      FROM submissions s
+      JOIN users u ON u.id = s.user_id
+      WHERE s.pact_id = ?
+      ORDER BY s.timestamp DESC
+      LIMIT ?
+    `).all(req.params.id, limit + 1) as any[];
+  }
+
+  const hasMore = subs.length > limit;
+  if (hasMore) subs.pop();
 
   const baseUrl = `${req.protocol}://${req.get('host')}`;
   const getReactions = db.prepare(
     `SELECT emoji, COUNT(*) as count, GROUP_CONCAT(user_id) as user_ids FROM reactions WHERE submission_id = ? GROUP BY emoji`
   );
 
-  res.json(subs.map(s => {
-    const reactionRows = getReactions.all(s.id) as any[];
-    const reactions = reactionRows.map(r => ({
-      emoji: r.emoji,
-      count: r.count,
-      reacted: (r.user_ids as string).split(',').includes(req.userId!),
-    }));
+  res.json({
+    data: subs.map(s => {
+      const reactionRows = getReactions.all(s.id) as any[];
+      const reactions = reactionRows.map(r => ({
+        emoji: r.emoji,
+        count: r.count,
+        reacted: (r.user_ids as string).split(',').includes(req.userId!),
+      }));
 
-    return {
-      id: s.id,
-      pactId: s.pact_id,
-      userId: s.user_id,
-      photoUri: s.photo_uri.startsWith('/') ? `${baseUrl}${s.photo_uri}` : s.photo_uri,
-      timestamp: s.timestamp,
-      verified: !!s.verified,
-      user: { id: s.user_id, name: s.user_name, username: s.username, avatar: fullAvatarUrl(s.user_avatar, req) },
-      reactions,
-    };
-  }));
+      return {
+        id: s.id,
+        pactId: s.pact_id,
+        userId: s.user_id,
+        photoUri: s.photo_uri.startsWith('/') ? `${baseUrl}${s.photo_uri}` : s.photo_uri,
+        timestamp: s.timestamp,
+        verified: !!s.verified,
+        user: { id: s.user_id, name: s.user_name, username: s.username, avatar: fullAvatarUrl(s.user_avatar, req) },
+        reactions,
+      };
+    }),
+    hasMore,
+  });
 });
 
 export default router;

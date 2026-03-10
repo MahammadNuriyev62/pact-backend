@@ -7,26 +7,49 @@ import { sendPushToUser } from '../push';
 
 const router = Router();
 
-// Get notifications for current user
+// Get notifications for current user (cursor-based pagination)
 router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
-  const notifs = db.prepare(`
-    SELECT n.*, u.name as from_user_name, u.avatar as from_user_avatar
-    FROM notifications n
-    LEFT JOIN users u ON u.id = n.from_user_id
-    WHERE n.user_id = ?
-    ORDER BY n.timestamp DESC
-  `).all(req.userId!) as any[];
+  const rawLimit = parseInt(req.query.limit as string);
+  const limit = Math.min(Math.max(isNaN(rawLimit) ? 20 : rawLimit, 1), 50);
+  const before = req.query.before as string | undefined;
 
-  res.json(notifs.map(n => ({
-    id: n.id,
-    type: n.type,
-    fromUserId: n.from_user_id,
-    fromUserAvatar: fullAvatarUrl(n.from_user_avatar, req),
-    pactId: n.pact_id,
-    message: n.message,
-    timestamp: n.timestamp,
-    read: !!n.read,
-  })));
+  let notifs: any[];
+  if (before) {
+    notifs = db.prepare(`
+      SELECT n.*, u.name as from_user_name, u.avatar as from_user_avatar
+      FROM notifications n
+      LEFT JOIN users u ON u.id = n.from_user_id
+      WHERE n.user_id = ? AND n.timestamp < ?
+      ORDER BY n.timestamp DESC
+      LIMIT ?
+    `).all(req.userId!, before, limit + 1) as any[];
+  } else {
+    notifs = db.prepare(`
+      SELECT n.*, u.name as from_user_name, u.avatar as from_user_avatar
+      FROM notifications n
+      LEFT JOIN users u ON u.id = n.from_user_id
+      WHERE n.user_id = ?
+      ORDER BY n.timestamp DESC
+      LIMIT ?
+    `).all(req.userId!, limit + 1) as any[];
+  }
+
+  const hasMore = notifs.length > limit;
+  if (hasMore) notifs.pop();
+
+  res.json({
+    data: notifs.map(n => ({
+      id: n.id,
+      type: n.type,
+      fromUserId: n.from_user_id,
+      fromUserAvatar: fullAvatarUrl(n.from_user_avatar, req),
+      pactId: n.pact_id,
+      message: n.message,
+      timestamp: n.timestamp,
+      read: !!n.read,
+    })),
+    hasMore,
+  });
 });
 
 // Get unread count

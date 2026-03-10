@@ -153,6 +153,13 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_streak_freezes_pact_user ON streak_freezes(pact_id, user_id);
   `);
 
+  // Compound indexes for cursor-based pagination
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_timestamp ON notifications(user_id, timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_submissions_pact_timestamp ON submissions(pact_id, timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_submissions_timestamp ON submissions(timestamp DESC);
+  `);
+
   // Migration: make pact_id nullable in notifications (needed for friend request notifications)
   const colInfo = db.prepare("PRAGMA table_info(notifications)").all() as any[];
   const pactIdCol = colInfo.find((c: any) => c.name === 'pact_id');
