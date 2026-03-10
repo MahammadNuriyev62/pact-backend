@@ -1,8 +1,11 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuid } from 'uuid';
+import fs from 'fs';
+import path from 'path';
 import db from '../db';
 import { AuthRequest, authMiddleware, signToken } from '../middleware/auth';
+import { fullAvatarUrl } from '../utils';
 
 const router = Router();
 
@@ -157,16 +160,142 @@ router.post('/google', async (req: AuthRequest, res: Response) => {
 });
 
 router.get('/me', authMiddleware, (req: AuthRequest, res: Response) => {
-  const user = db.prepare('SELECT id, name, username, email, avatar FROM users WHERE id = ?').get(req.userId!) as any;
+  const user = db.prepare('SELECT id, name, username, email, avatar, bio FROM users WHERE id = ?').get(req.userId!) as any;
   if (!user) {
     res.status(404).json({ error: 'User not found' });
     return;
   }
-  const baseUrl = `${req.protocol}://${req.get('host')}`;
-  if (user.avatar && user.avatar.startsWith('/')) {
-    user.avatar = `${baseUrl}${user.avatar}`;
+  res.json({ ...user, avatar: fullAvatarUrl(user.avatar, req), isCurrentUser: true });
+});
+
+// PUT /auth/profile — update profile fields
+router.put('/profile', authMiddleware, (req: AuthRequest, res: Response) => {
+  const { name, username, bio } = req.body;
+
+  if (name === undefined && username === undefined && bio === undefined) {
+    res.status(400).json({ error: 'At least one field (name, username, bio) is required' });
+    return;
   }
-  res.json({ ...user, isCurrentUser: true });
+
+  const updates: string[] = [];
+  const values: any[] = [];
+
+  if (name !== undefined) {
+    const trimmed = String(name).trim();
+    if (!trimmed || trimmed.length > 50) {
+      res.status(400).json({ error: 'Name must be 1-50 characters', field: 'name' });
+      return;
+    }
+    updates.push('name = ?');
+    values.push(trimmed);
+  }
+
+  if (username !== undefined) {
+    const trimmed = String(username).trim().toLowerCase();
+    if (!/^[a-z0-9._-]{3,30}$/.test(trimmed)) {
+      res.status(400).json({ error: 'Username must be 3-30 characters (lowercase letters, numbers, dots, underscores, hyphens)', field: 'username' });
+      return;
+    }
+    const existing = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(trimmed, req.userId!) as any;
+    if (existing) {
+      res.status(409).json({ error: 'Username is already taken', field: 'username' });
+      return;
+    }
+    updates.push('username = ?');
+    values.push(trimmed);
+  }
+
+  if (bio !== undefined) {
+    const trimmed = String(bio).trim();
+    if (trimmed.length > 160) {
+      res.status(400).json({ error: 'Bio must be 160 characters or less', field: 'bio' });
+      return;
+    }
+    updates.push('bio = ?');
+    values.push(trimmed);
+  }
+
+  values.push(req.userId!);
+  db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+
+  const updated = db.prepare('SELECT id, name, username, email, avatar, bio FROM users WHERE id = ?').get(req.userId!) as any;
+  res.json({ ...updated, avatar: fullAvatarUrl(updated.avatar, req), isCurrentUser: true });
+});
+
+// DELETE /auth/account — permanently delete account and all related data
+router.delete('/account', authMiddleware, (req: AuthRequest, res: Response) => {
+  const userId = req.userId!;
+  const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..');
+  const uploadsDir = path.join(DATA_DIR, 'uploads');
+
+  // Collect files to delete (submissions + avatar)
+  const userSubs = db.prepare('SELECT photo_uri FROM submissions WHERE user_id = ?').all(userId) as any[];
+  const userRow = db.prepare('SELECT avatar FROM users WHERE id = ?').get(userId) as any;
+  const filesToDelete: string[] = [];
+  for (const s of userSubs) {
+    if (s.photo_uri && s.photo_uri.startsWith('/uploads/')) {
+      filesToDelete.push(path.join(uploadsDir, path.basename(s.photo_uri)));
+    }
+  }
+  if (userRow?.avatar && userRow.avatar.startsWith('/uploads/')) {
+    filesToDelete.push(path.join(uploadsDir, path.basename(userRow.avatar)));
+  }
+
+  // Run deletion in a transaction
+  const deleteAll = db.transaction(() => {
+    // 1. Delete reactions by this user
+    db.prepare('DELETE FROM reactions WHERE user_id = ?').run(userId);
+
+    // 2. Delete messages by this user
+    db.prepare('DELETE FROM messages WHERE user_id = ?').run(userId);
+
+    // 3. Delete streak freezes for this user
+    db.prepare('DELETE FROM streak_freezes WHERE user_id = ?').run(userId);
+
+    // 4. Delete notifications received or sent by this user
+    db.prepare('DELETE FROM notifications WHERE user_id = ?').run(userId);
+    db.prepare('UPDATE notifications SET from_user_id = NULL WHERE from_user_id = ?').run(userId);
+
+    // 5. Delete push subscriptions
+    db.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').run(userId);
+
+    // 6. Delete friendships
+    db.prepare('DELETE FROM friendships WHERE requester_id = ? OR addressee_id = ?').run(userId, userId);
+
+    // 7. Handle pacts where user is creator
+    const createdPacts = db.prepare('SELECT id FROM pacts WHERE created_by = ?').all(userId) as any[];
+    for (const pact of createdPacts) {
+      // Find another accepted participant to transfer ownership
+      const newOwner = db.prepare(
+        `SELECT user_id FROM pact_participants WHERE pact_id = ? AND user_id != ? AND status = 'accepted' ORDER BY rowid ASC LIMIT 1`
+      ).get(pact.id, userId) as any;
+
+      if (newOwner) {
+        db.prepare('UPDATE pacts SET created_by = ? WHERE id = ?').run(newOwner.user_id, pact.id);
+      } else {
+        // No other participants — delete the pact (CASCADE handles submissions, participants, etc.)
+        db.prepare('DELETE FROM pacts WHERE id = ?').run(pact.id);
+      }
+    }
+
+    // 8. Delete pact_participants entries (for pacts user didn't create)
+    db.prepare('DELETE FROM pact_participants WHERE user_id = ?').run(userId);
+
+    // 9. Delete submissions by this user (reactions on these cascade)
+    db.prepare('DELETE FROM submissions WHERE user_id = ?').run(userId);
+
+    // 10. Delete the user
+    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+  });
+
+  deleteAll();
+
+  // Clean up files (non-critical, after transaction)
+  for (const filePath of filesToDelete) {
+    try { fs.unlinkSync(filePath); } catch { /* file may not exist */ }
+  }
+
+  res.json({ success: true });
 });
 
 export default router;

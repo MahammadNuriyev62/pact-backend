@@ -153,6 +153,13 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_streak_freezes_pact_user ON streak_freezes(pact_id, user_id);
   `);
 
+  // Migration: add bio column to users
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''`);
+  } catch (e: any) {
+    if (!e.message.includes('duplicate column name')) throw e;
+  }
+
   // Compound indexes for cursor-based pagination
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_notifications_user_timestamp ON notifications(user_id, timestamp DESC);

@@ -7,6 +7,7 @@ import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { sendPushToUser } from '../push';
 import { fullAvatarUrl } from '../utils';
 import { processAvatar } from '../imageUtils';
+import { utcTimestampToDateInTimezone } from '../timezone';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..');
 const uploadsDir = path.join(DATA_DIR, 'uploads');
@@ -301,6 +302,101 @@ router.get('/friend-requests', authMiddleware, (req: AuthRequest, res: Response)
     avatar: fullAvatarUrl(r.avatar, req),
     createdAt: r.created_at,
   })));
+});
+
+// GET /users/:id/profile — get public profile of any user (must be friends or share a pact)
+router.get('/:id/profile', authMiddleware, (req: AuthRequest, res: Response) => {
+  const targetId = req.params.id;
+
+  const targetUser = db.prepare('SELECT id, name, username, avatar, bio FROM users WHERE id = ?').get(targetId) as any;
+  if (!targetUser) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  // Check if they're friends or share a pact
+  const isSelf = targetId === req.userId!;
+  const friendship = !isSelf ? db.prepare(`
+    SELECT id FROM friendships
+    WHERE status = 'accepted' AND (
+      (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)
+    )
+  `).get(req.userId!, targetId, targetId, req.userId!) as any : null;
+
+  const sharedPact = !isSelf && !friendship ? db.prepare(`
+    SELECT pp1.pact_id FROM pact_participants pp1
+    INNER JOIN pact_participants pp2 ON pp1.pact_id = pp2.pact_id
+    WHERE pp1.user_id = ? AND pp2.user_id = ? AND pp1.status = 'accepted' AND pp2.status = 'accepted'
+    LIMIT 1
+  `).get(req.userId!, targetId) as any : null;
+
+  if (!isSelf && !friendship && !sharedPact) {
+    res.status(403).json({ error: 'You can only view profiles of friends or pact members' });
+    return;
+  }
+
+  // Get shared pacts (pacts both users are in)
+  const sharedPacts = db.prepare(`
+    SELECT p.id, p.title, p.icon, p.icon_family as iconFamily, p.color, p.frequency
+    FROM pacts p
+    INNER JOIN pact_participants pp1 ON pp1.pact_id = p.id AND pp1.user_id = ? AND pp1.status = 'accepted'
+    INNER JOIN pact_participants pp2 ON pp2.pact_id = p.id AND pp2.user_id = ? AND pp2.status = 'accepted'
+  `).all(req.userId!, targetId) as any[];
+
+  // Get stats: total pacts, total submissions
+  const totalPacts = (db.prepare(
+    `SELECT COUNT(*) as count FROM pact_participants WHERE user_id = ? AND status = 'accepted'`
+  ).get(targetId) as any).count;
+
+  const totalSubmissions = (db.prepare(
+    `SELECT COUNT(*) as count FROM submissions WHERE user_id = ? AND verified = 1`
+  ).get(targetId) as any).count;
+
+  // Get activity map (contribution graph) — timezone-aware
+  const subs = db.prepare(`
+    SELECT s.timestamp, p.timezone
+    FROM submissions s
+    JOIN pact_participants pp ON pp.pact_id = s.pact_id AND pp.user_id = ? AND pp.status = 'accepted'
+    JOIN pacts p ON p.id = s.pact_id
+    WHERE s.user_id = ? AND s.verified = 1
+  `).all(targetId, targetId) as any[];
+
+  const activityMap: Record<string, number> = {};
+  for (const s of subs) {
+    const date = utcTimestampToDateInTimezone(s.timestamp, s.timezone || 'UTC');
+    activityMap[date] = (activityMap[date] || 0) + 1;
+  }
+
+  // Friendship status
+  let friendshipStatus = 'none';
+  if (isSelf) {
+    friendshipStatus = 'self';
+  } else if (friendship) {
+    friendshipStatus = 'accepted';
+  } else {
+    const anyFriendship = db.prepare(`
+      SELECT status,
+        CASE WHEN requester_id = ? THEN 'outgoing' ELSE 'incoming' END as direction
+      FROM friendships
+      WHERE (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)
+    `).get(req.userId!, req.userId!, targetId, targetId, req.userId!) as any;
+    if (anyFriendship) friendshipStatus = anyFriendship.status;
+  }
+
+  res.json({
+    id: targetUser.id,
+    name: targetUser.name,
+    username: targetUser.username,
+    avatar: fullAvatarUrl(targetUser.avatar, req),
+    bio: targetUser.bio || '',
+    stats: {
+      totalPacts,
+      totalSubmissions,
+    },
+    sharedPacts,
+    activityMap,
+    friendshipStatus,
+  });
 });
 
 export default router;
