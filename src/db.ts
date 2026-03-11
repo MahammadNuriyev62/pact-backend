@@ -153,6 +153,13 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_streak_freezes_pact_user ON streak_freezes(pact_id, user_id);
   `);
 
+  // Migration: add count column to streak_freezes for weekly freeze support
+  try {
+    db.exec(`ALTER TABLE streak_freezes ADD COLUMN count INTEGER NOT NULL DEFAULT 1`);
+  } catch (e: any) {
+    if (!e.message.includes('duplicate column name')) throw e;
+  }
+
   // Migration: add bio column to users
   try {
     db.exec(`ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''`);

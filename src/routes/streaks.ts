@@ -5,12 +5,19 @@ import { getTodayInTimezone, utcTimestampToDateInTimezone } from '../timezone';
 
 const router = Router();
 
-/** Max freezes a user can bank per pact */
+/** Max freezes a user can bank per pact (daily) */
 const MAX_FREEZES = 2;
 /** Days of consecutive personal submissions needed to earn 1 freeze */
 const DAYS_PER_FREEZE = 7;
 /** Minimum days between freeze uses */
 const FREEZE_COOLDOWN_DAYS = 7;
+
+/** Consecutive completed weeks needed to earn 1 weekly freeze */
+const WEEKS_PER_FREEZE = 2;
+/** Minimum completed weeks before weekly freezes activate */
+const MIN_WEEKS_FOR_FREEZE = 3;
+/** Weeks of cooldown after any weekly freeze use */
+const WEEKLY_FREEZE_COOLDOWN_WEEKS = 2;
 
 /** Helper: get the Sunday that starts the week containing a date string */
 function getWeekKey(dateStr: string): string {
@@ -20,7 +27,7 @@ function getWeekKey(dateStr: string): string {
   return weekStart.toISOString().split('T')[0];
 }
 
-function computeStreak(completedDates: string[], frequency: string, today: string, timesPerWeek?: number, createdAt?: string): { currentStreak: number; longestStreak: number } {
+function computeStreak(completedDates: string[], frequency: string, today: string, timesPerWeek?: number, createdAt?: string, weeklyFreezes?: Map<string, number>): { currentStreak: number; longestStreak: number } {
   if (completedDates.length === 0) return { currentStreak: 0, longestStreak: 0 };
 
   const sorted = [...completedDates].sort();
@@ -60,7 +67,9 @@ function computeStreak(completedDates: string[], frequency: string, today: strin
         }
       }
 
-      if ((weeks.get(weekKeys[i]) || 0) >= target) {
+      const subsCount = weeks.get(weekKeys[i]) || 0;
+      const freezeCount = weeklyFreezes?.get(weekKeys[i]) || 0;
+      if (subsCount + freezeCount >= target) {
         streak++;
         longestStreak = Math.max(longestStreak, streak);
       } else {
@@ -182,6 +191,109 @@ function computeFreezeInfo(pactId: string, userId: string, submissionDates: Set<
   };
 }
 
+/**
+ * Compute freeze info for a user+pact on a weekly pact.
+ * Max freezes = timesPerWeek + 1. Each freeze covers 1 missed submission in a week.
+ * Earn 1 freeze per 3 consecutive completed weeks. 2-week cooldown after use.
+ */
+function computeWeeklyFreezeInfo(
+  pactId: string,
+  userId: string,
+  submissionDates: Set<string>,
+  today: string,
+  timesPerWeek: number,
+  createdAt: string
+) {
+  const maxFreezes = timesPerWeek + 1;
+
+  // Get all freeze rows for this user+pact
+  const freezeRows = db.prepare(
+    'SELECT used_for_date, count FROM streak_freezes WHERE pact_id = ? AND user_id = ? ORDER BY used_for_date'
+  ).all(pactId, userId) as any[];
+
+  // Total freezes consumed (sum of counts)
+  const totalUsed = freezeRows.reduce((sum: number, r: any) => sum + (r.count || 1), 0);
+  const freezeWeekKeys = freezeRows.map((r: any) => r.used_for_date);
+
+  // Group submissions by week
+  const weekSubmissions = new Map<string, number>();
+  for (const date of submissionDates) {
+    const wk = getWeekKey(date);
+    weekSubmissions.set(wk, (weekSubmissions.get(wk) || 0) + 1);
+  }
+
+  // Build freeze map (week -> count) for completed-week checks
+  const freezeMap = new Map<string, number>();
+  for (const r of freezeRows) {
+    freezeMap.set(r.used_for_date, r.count || 1);
+  }
+
+  // Get sorted week keys (exclude creation week and current week)
+  const firstWeekKey = createdAt ? getWeekKey(createdAt.split('T')[0]) : null;
+  const currentWeekKey = getWeekKey(today);
+
+  const allWeekKeys = new Set<string>();
+  for (const wk of weekSubmissions.keys()) allWeekKeys.add(wk);
+  for (const wk of freezeMap.keys()) allWeekKeys.add(wk);
+
+  const completedWeekKeys = [...allWeekKeys]
+    .filter(k => k !== firstWeekKey && k < currentWeekKey)
+    .sort();
+
+  // Count consecutive completed weeks going backwards (submissions + freezes >= target)
+  let consecutiveWeeks = 0;
+  for (let i = completedWeekKeys.length - 1; i >= 0; i--) {
+    const wk = completedWeekKeys[i];
+
+    // Check for gap with the next week we already counted
+    if (i < completedWeekKeys.length - 1) {
+      const curr = new Date(wk + 'T00:00:00Z');
+      const next = new Date(completedWeekKeys[i + 1] + 'T00:00:00Z');
+      const gapDays = Math.round((next.getTime() - curr.getTime()) / (1000 * 60 * 60 * 24));
+      if (gapDays > 7) break;
+    }
+
+    const subs = weekSubmissions.get(wk) || 0;
+    const freezes = freezeMap.get(wk) || 0;
+    if (subs + freezes >= timesPerWeek) {
+      consecutiveWeeks++;
+    } else {
+      break;
+    }
+  }
+
+  // Earned freezes: 1 per WEEKS_PER_FREEZE consecutive completed weeks
+  const totalEarned = Math.floor(consecutiveWeeks / WEEKS_PER_FREEZE);
+  const available = Math.max(0, Math.min(maxFreezes, totalEarned) - totalUsed);
+
+  // Cooldown check: weeks since last freeze use
+  const lastFreezeWeek = freezeWeekKeys.length > 0 ? freezeWeekKeys[freezeWeekKeys.length - 1] : null;
+  let onCooldown = false;
+  if (lastFreezeWeek) {
+    const lastD = new Date(lastFreezeWeek + 'T00:00:00Z');
+    const todayD = new Date(currentWeekKey + 'T00:00:00Z');
+    const weeksSince = Math.round((todayD.getTime() - lastD.getTime()) / (1000 * 60 * 60 * 24 * 7));
+    onCooldown = weeksSince < WEEKLY_FREEZE_COOLDOWN_WEEKS;
+  }
+
+  // Progress toward next freeze
+  const nextFreezeIn = consecutiveWeeks >= WEEKS_PER_FREEZE * maxFreezes
+    ? 0
+    : WEEKS_PER_FREEZE - (consecutiveWeeks % WEEKS_PER_FREEZE);
+
+  return {
+    available,
+    totalEarned: Math.min(maxFreezes, totalEarned),
+    used: totalUsed,
+    freezeDates: freezeWeekKeys,
+    lastFreezeDate: lastFreezeWeek,
+    onCooldown,
+    personalStreak: consecutiveWeeks,
+    nextFreezeIn,
+    maxFreezes,
+  };
+}
+
 // Get unified streaks per pact (streak only increments when ALL participants complete)
 router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
   const pactIds = db.prepare(
@@ -232,22 +344,92 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
       perUserEffective.set(p.user_id, effective);
     }
 
-    // Unified completed dates: days where ALL participants submitted OR used a freeze
-    const allDates = new Set<string>();
-    for (const dates of perUserEffective.values()) {
-      for (const d of dates) allDates.add(d);
-    }
-
+    // Unified completed dates/weeks: depends on frequency
     const unifiedDates: string[] = [];
-    for (const date of allDates) {
-      let allCovered = true;
-      for (const dates of perUserEffective.values()) {
-        if (!dates.has(date)) { allCovered = false; break; }
+    let weeklyFreezeMap: Map<string, number> | undefined;
+
+    if (pact.frequency === 'weekly') {
+      // For weekly pacts, compute at the week level:
+      // A week is "unified complete" if every participant's (submissions + freezes) >= target
+      const target = pact.times_per_week || 3;
+      const firstWeekKey = pact.created_at ? getWeekKey(pact.created_at.split('T')[0]) : null;
+
+      // Collect all week keys from all participants
+      const allWeekKeys = new Set<string>();
+      for (const dates of perUserDates.values()) {
+        for (const d of dates) allWeekKeys.add(getWeekKey(d));
       }
-      if (allCovered) unifiedDates.push(date);
+
+      // Build per-user freeze counts per week
+      const perUserWeeklyFreezes: Map<string, Map<string, number>> = new Map();
+      for (const p of participants) {
+        const userFreezes = new Map<string, number>();
+        const freezeRows = db.prepare(
+          'SELECT used_for_date, count FROM streak_freezes WHERE pact_id = ? AND user_id = ?'
+        ).all(row.pact_id, p.user_id) as any[];
+        for (const r of freezeRows) {
+          userFreezes.set(r.used_for_date, r.count || 1);
+          allWeekKeys.add(r.used_for_date);
+        }
+        perUserWeeklyFreezes.set(p.user_id, userFreezes);
+      }
+
+      // Build aggregate freeze map for computeStreak
+      weeklyFreezeMap = new Map<string, number>();
+      for (const wk of allWeekKeys) {
+        // Min freeze count across all participants for this week (unified)
+        let minFreezes = Infinity;
+        for (const p of participants) {
+          const userFreezes = perUserWeeklyFreezes.get(p.user_id) || new Map();
+          minFreezes = Math.min(minFreezes, userFreezes.get(wk) || 0);
+        }
+        if (minFreezes > 0 && minFreezes < Infinity) {
+          weeklyFreezeMap.set(wk, minFreezes);
+        }
+      }
+
+      for (const wk of allWeekKeys) {
+        if (wk === firstWeekKey) continue;
+        let allMet = true;
+        for (const p of participants) {
+          const userDates = perUserDates.get(p.user_id) || new Set();
+          let subsInWeek = 0;
+          for (const d of userDates) {
+            if (getWeekKey(d) === wk) subsInWeek++;
+          }
+          const userFreezes = perUserWeeklyFreezes.get(p.user_id) || new Map();
+          const freezeCount = userFreezes.get(wk) || 0;
+          if (subsInWeek + freezeCount < target) {
+            allMet = false;
+            break;
+          }
+        }
+        if (allMet) {
+          // Add synthetic dates so computeStreak can group by week
+          const weekStart = new Date(wk + 'T00:00:00Z');
+          for (let i = 0; i < target; i++) {
+            const d = new Date(weekStart);
+            d.setUTCDate(weekStart.getUTCDate() + i);
+            unifiedDates.push(d.toISOString().split('T')[0]);
+          }
+        }
+      }
+    } else {
+      // Daily: unified = days where ALL participants submitted OR used a freeze
+      const allDates = new Set<string>();
+      for (const dates of perUserEffective.values()) {
+        for (const d of dates) allDates.add(d);
+      }
+      for (const date of allDates) {
+        let allCovered = true;
+        for (const dates of perUserEffective.values()) {
+          if (!dates.has(date)) { allCovered = false; break; }
+        }
+        if (allCovered) unifiedDates.push(date);
+      }
     }
 
-    const { currentStreak, longestStreak } = computeStreak(unifiedDates, pact.frequency, today, pact.times_per_week, pact.created_at);
+    const { currentStreak, longestStreak } = computeStreak(unifiedDates, pact.frequency, today, pact.times_per_week, pact.created_at, weeklyFreezeMap);
 
     // Today's status: how many participants submitted today (actual submissions, not freezes)
     let completedToday = 0;
@@ -260,9 +442,12 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response) => {
 
     // Current user's freeze info
     const mySubmissionDates = perUserDates.get(req.userId!) || new Set();
-    const freezeInfo = pact.frequency === 'daily'
-      ? computeFreezeInfo(row.pact_id, req.userId!, mySubmissionDates, today)
-      : null;
+    let freezeInfo: any = null;
+    if (pact.frequency === 'daily') {
+      freezeInfo = { ...computeFreezeInfo(row.pact_id, req.userId!, mySubmissionDates, today), maxFreezes: MAX_FREEZES };
+    } else if (pact.frequency === 'weekly') {
+      freezeInfo = computeWeeklyFreezeInfo(row.pact_id, req.userId!, mySubmissionDates, today, pact.times_per_week || 3, pact.created_at);
+    }
 
     // Weekly progress for weekly pacts
     let weeklyProgress = null;
@@ -355,4 +540,4 @@ router.get('/activity', authMiddleware, (req: AuthRequest, res: Response) => {
 });
 
 export default router;
-export { computeStreak, computePersonalSubmissionStreak, computeFreezeInfo, MAX_FREEZES, DAYS_PER_FREEZE, FREEZE_COOLDOWN_DAYS };
+export { computeStreak, computePersonalSubmissionStreak, computeFreezeInfo, computeWeeklyFreezeInfo, getWeekKey, MAX_FREEZES, DAYS_PER_FREEZE, FREEZE_COOLDOWN_DAYS, WEEKS_PER_FREEZE, MIN_WEEKS_FOR_FREEZE, WEEKLY_FREEZE_COOLDOWN_WEEKS };
